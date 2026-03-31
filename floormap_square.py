@@ -37,3 +37,6 @@ plt.xlim(range_min - 200, range_max + 200)
 plt.ylim(range_min - 200, range_max + 200)
 
 plt.show()
+
+detector_count = len(x) * len(y)
+print(f"Number of detectors: {detector_count}")

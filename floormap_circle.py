@@ -5,12 +5,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # decides distance between the rings and the points 
-distance_between_points = 100  
+distance_between_points = 50  
 radii = np.arange(distance_between_points, 1001, distance_between_points)
 
 
 plt.figure(figsize=(7,7))
+
+detector_count = 0
+
 plt.scatter(0, 0, color='blue', s=15)
+detector_count += 1
+
 for r in radii:
     # number of points based on the circumference of the circle 
     points = int(2 * np.pi * r / distance_between_points)
@@ -21,6 +26,8 @@ for r in radii:
     y = r * np.sin(theta)
     
     plt.scatter(x, y, color='blue', s=15)
+
+    detector_count += points
 
 # center point
 
@@ -36,5 +43,7 @@ plt.ylabel("Y-plane [m]")
 plt.axis('equal')
 
 plt.show()
+
+print(f"Number of detectors: {detector_count}")
 
 

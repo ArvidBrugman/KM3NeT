@@ -25,14 +25,26 @@ radii = np.linspace(0, np.sqrt(r_max), n_rings)**2
 x_points = []
 y_points = []
 
+# counter of detectors
+detector_count = 0
+
 # crossing points between spokes and rings
 for r in radii:
     for theta in angles:
-        x = r * np.cos(theta)
-        y = r * np.sin(theta)
         
-        x_points.append(x)
-        y_points.append(y)
+        # avoid dubble counting in the center
+        if r == 0:
+            if detector_count == 0:  # only add once
+                x_points.append(0)
+                y_points.append(0)
+                detector_count += 1
+        else:
+            x = r * np.cos(theta)
+            y = r * np.sin(theta)
+            
+            x_points.append(x)
+            y_points.append(y)
+            detector_count += 1
 
 # plot points
 plt.scatter(x_points, y_points, s=10, color='blue')
@@ -63,3 +75,4 @@ plt.ylabel("Y-plane [m]")
 
 plt.show()
 
+print(f"Number of detectors: {detector_count}")
