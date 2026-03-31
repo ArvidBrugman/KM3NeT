@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 # parameters
 # distances between the points
-afstand = 200   
+afstand = 200  
 # starting point of the grid
 range_min = -1000
 # ending point of the grid
