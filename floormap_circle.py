@@ -4,14 +4,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-radii = np.arange(100, 1001, 100)
-afstand_tussen_punten = 100  # dit bepaal jij
+# decides distance between the rings and the points 
+distance_between_points = 100  
+radii = np.arange(distance_between_points, 1001, distance_between_points)
+
 
 plt.figure(figsize=(7,7))
-
+plt.scatter(0, 0, color='blue', s=15)
 for r in radii:
     # number of points based on the circumference of the circle 
-    points = int(2 * np.pi * r / afstand_tussen_punten)
+    points = int(2 * np.pi * r / distance_between_points)
     
     theta = np.linspace(0, 2*np.pi, points, endpoint=False)
     
@@ -21,7 +23,7 @@ for r in radii:
     plt.scatter(x, y, color='blue', s=15)
 
 # center point
-plt.scatter(0, 0, color='blue', s=50)
+
 plt.axis('equal')
 plt.title("Realistic Sensor Rings")
 
