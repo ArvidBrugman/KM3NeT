@@ -6,7 +6,7 @@ distance_between_points = 100
 radii = np.arange(distance_between_points, 1001, distance_between_points)
 
 # hight of the layers (e.g., every 200m)
-z_layers = np.arange(0, 1001, 200)  
+z_layers = np.arange(0, 1001, 100)  
 
 fig = plt.figure(figsize=(8,8))
 ax = fig.add_subplot(111, projection='3d')
