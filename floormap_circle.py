@@ -5,7 +5,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # decides distance between the rings and the points 
-distance_between_points = 50  
+distance_between_points = 100  
 radii = np.arange(distance_between_points, 1001, distance_between_points)
 
 
