@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 R = 100
 # spacing between spirals (controls the density of the spiral, smaller, more dense)
 c = 5
-
-k = 20           # totaal aantal spiralen
+# number of spirals
+k = 20          
 # for this amount of spiral, we make a channel (every 5th spiral is a channel) 
-spacing = 3      
+spacing = 5      
 # how many spirals together form a channel
 channel_width = 1  
 
