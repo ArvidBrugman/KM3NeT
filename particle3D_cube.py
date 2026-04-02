@@ -5,48 +5,39 @@ import matplotlib.pyplot as plt
 # USER PARAMETERS
 # =====================
 
-# Detector
-distance_between_points = 500
-max_radius = 3300
-max_height = 3000
-z_step = 500
+# Cube detector (~100 km³)
+cube_size = 4640  # meters
+half_size = cube_size / 2
+spacing = 400     # afstand tussen lijnen
 
-# Particle (cartesian via cylindrical startingpoint)
+# Particle
 r_particle = 1500
 theta_particle = np.pi / 4
-z_particle = 1000
+z_particle = 0
 
-# Movement (cartesian)
-dx = 800 
+# Movement
+dx = 800
 dy = 1000
 dz = 1500
 
 
 # =====================
-# FUNCTION 1: DETECTOR (MET LIJNEN)
+# FUNCTION 1: CUBE DETECTOR (MET LIJNEN)
 # =====================
-def build_detector(ax, distance_between_points, max_radius, max_height, z_step):
-    radii = np.arange(distance_between_points, max_radius, distance_between_points)
-    z_layers = np.arange(0, max_height + 1, z_step)
+def build_cube_detector(ax, half_size, spacing, cube_size):
+
+    x_vals = np.arange(-half_size, half_size + spacing, spacing)
+    y_vals = np.arange(-half_size, half_size + spacing, spacing)
+    z_vals = np.arange(-half_size, half_size + spacing, spacing)
 
     detector_count = 0
     line_count = 0
 
-    for r in radii:
-        points = int(2 * np.pi * r / distance_between_points)
-        theta = np.linspace(0, 2*np.pi, points, endpoint=False)
+    # lijnen op elk (x,y)
+    for x in x_vals:
+        for y in y_vals:
 
-        x_ring = r * np.cos(theta)
-        y_ring = r * np.sin(theta)
-
-        for i in range(len(x_ring)):
-            x = x_ring[i]
-            y = y_ring[i]
-
-            # detectoren langs deze lijn
-            z_vals = z_layers
-
-            # plot detectoren
+            # detectoren langs z
             ax.scatter(
                 np.full_like(z_vals, x),
                 np.full_like(z_vals, y),
@@ -55,7 +46,7 @@ def build_detector(ax, distance_between_points, max_radius, max_height, z_step):
                 s=10
             )
 
-            # plot lijn (string)
+            # verticale lijn
             ax.plot(
                 [x]*len(z_vals),
                 [y]*len(z_vals),
@@ -67,7 +58,7 @@ def build_detector(ax, distance_between_points, max_radius, max_height, z_step):
             detector_count += len(z_vals)
             line_count += 1
 
-    detectors_per_line = len(z_layers)
+    detectors_per_line = len(z_vals)
 
     return detector_count, line_count, detectors_per_line
 
@@ -76,25 +67,24 @@ def build_detector(ax, distance_between_points, max_radius, max_height, z_step):
 # FUNCTION 2: PARTICLE
 # =====================
 def simulate_particle(ax, r, theta, z, dx, dy, dz):
-    # cylindrical to cartesian
     x = r * np.cos(theta)
     y = r * np.sin(theta)
 
-    # startingpoint
+    # start
     ax.scatter(x, y, z, color='orange', s=80, label='Start')
 
-    # new position
+    # nieuwe positie
     x_new = x + dx
     y_new = y + dy
     z_new = z + dz
 
-    # endpoint
+    # eind
     ax.scatter(x_new, y_new, z_new, color='red', s=80, label='End')
 
     # vector
     ax.quiver(x, y, z, dx, dy, dz, color='orange', normalize=False)
 
-    # distance
+    # afstand
     distance = np.sqrt(dx**2 + dy**2 + dz**2)
 
     return distance
@@ -106,13 +96,12 @@ def simulate_particle(ax, r, theta, z, dx, dy, dz):
 fig = plt.figure(figsize=(8,8))
 ax = fig.add_subplot(111, projection='3d')
 
-# build detector
-detector_count, line_count, detectors_per_line = build_detector(
+# build cube detector
+detector_count, line_count, detectors_per_line = build_cube_detector(
     ax,
-    distance_between_points,
-    max_radius,
-    max_height,
-    z_step
+    half_size,
+    spacing,
+    cube_size
 )
 
 # simulate particle
@@ -124,23 +113,26 @@ distance = simulate_particle(
     dx, dy, dz
 )
 
-
 # --------------------
 # TOTAL LINE LENGTH
 # --------------------
-total_line_length_m = line_count * max_height
+total_line_length_m = line_count * cube_size
 total_line_length_km = total_line_length_m / 1000
 
 # labels
-ax.set_title("3D Detector with Vertical Lines (Strings)")
+ax.set_title("3D Cube Detector (~100 km³) with Vertical Lines")
 ax.set_xlabel("X-plane [m]")
 ax.set_ylabel("Y-plane [m]")
 ax.set_zlabel("Z-plane [m]")
 
+ax.set_box_aspect([1,1,1])
 ax.legend()
 
 plt.show()
 
+# =====================
+# OUTPUT
+# =====================
 print("\n--- DETECTOR INFO ---")
 print(f"Total number of detectors: {detector_count}")
 print(f"Total number of lines: {line_count}")
