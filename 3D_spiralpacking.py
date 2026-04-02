@@ -19,7 +19,7 @@ ax = fig.add_subplot(111, projection='3d')
 detector_count = 0
 
 # --------------------
-# SPIRAL PER LAAG
+# SPIRAL PER LAYER
 # --------------------
 for z in z_layers:
     for n in range(detectors_per_layer):

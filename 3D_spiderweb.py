@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 # maximal radius of the sphere
 r_max = 1000
 # number of layers (concentric spheres)
-n_rings = 15
+n_rings = 6
 # number of points per layer (evenly distributed)
-n_theta = 20
+n_theta = 12
 # number of points in vertical direction (evenly distributed)
 n_phi = 8
 
