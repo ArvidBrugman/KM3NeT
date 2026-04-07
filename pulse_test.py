@@ -293,10 +293,11 @@ def main():
     print("Computing signals...")
     signals = compute_signals(detector_positions, source_pos, calibration_data, direction)
 
-    # normalization
-    # largest signal will be 1, so we can see the relative strength of the signals at different positions
-    if np.max(signals) > 0:
-        signals = signals / np.max(signals)
+    # convert to mPa for better visualization
+    signals_mPa = signals * 1000
+
+    # replace zeros with very small value for log scale
+    signals_mPa[signals_mPa <= 0] = 1e-9
 
     # ordens the data for plotting
     x = detector_positions[:, 0]
@@ -304,14 +305,24 @@ def main():
     z = detector_positions[:, 2]
 
     # makes a scatter plot of the detector positions, colored by the signal strength
-    sc = ax.scatter(x, y, z, c=signals, cmap='plasma', s=40)
+    sc = ax.scatter(
+    x, y, z,
+    c=signals_mPa,
+    cmap='plasma',
+    s=40, vmin=0, vmax=np.percentile(signals_mPa, 95))
+
 
     # makes a colorbar to show the scale of the signal strength
     cbar = plt.colorbar(sc, ax=ax)
-    cbar.set_label("Normalized Signal Strength")
+    cbar.set_label("Signal Amplitude [mPa]")
 
     # plots the position of the neutrino
     ax.scatter(x0, y0, z0, color='red', s=120, label='Neutrino')
+
+    # plot selected detector position (for pulse analysis)
+    ax.scatter(detector_position[0], detector_position[1],
+    detector_position[2], color='white', edgecolor='black',
+    s=120, label='Selected detector')
 
     # Plot shower direction as a vector (arrow)
     # length of the arrow (in meters)
@@ -339,12 +350,12 @@ def main():
     # =====================
 
     # choose a detector position (example: directly above origin at z=100)
-    test_detector = detector_position
+    detector_position = detector_position
 
-    print("\nComputing pulse at test position:", test_detector)
+    print("\nComputing pulse at test position:", detector_position)
 
     time_array, signal = compute_pulse_at_position(
-        test_detector,
+        detector_position,
         source_pos,
         direction,
         Edep
