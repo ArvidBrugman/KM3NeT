@@ -22,6 +22,9 @@ z_particle = 1000
 # Energy shower
 Edep = 1e20
 
+# Detector position for single pulse analysis (cartesian coordinates)
+detector_position = np.array([0, 0, 1000])
+
 # =====================
 # NEUTRINO DIRECTION
 # =====================
@@ -192,28 +195,66 @@ def compute_signals(detector_positions, source_pos, calibration_data, direction)
         if dist == 0:
             amp = calibration_data[0,2]
         else:
-            # distance to shower
+            # distance to shower axis (radial)
             R = np.sqrt(r_vec[0]**2 + r_vec[1]**2)
-            # distance in height along the shower axis
-            Z = r_vec[2]
 
-            # what will ACpulse give us at that point based on the calibration data
-            amp = interpolate_amplitude(R, Z, calibration_data)
+            # distance along the shower axis 
+            Z = np.dot(r_vec, direction)
 
-            # distance damping as a consequence of the medium (sea water)
-            amp *= np.exp(-dist / 2000)
+            # Z-cut: skip regions where signal is negligible
+            if Z < -10 or Z > 50:
+                amp = 0
+            else:
+                # what will ACpulse give us at that point based on the calibration data
+                amp = interpolate_amplitude(R, Z, calibration_data)
 
-            # projects detector on shower plane to get the distance along the pancake shape
-            d = np.dot(r_vec, direction)
-            pancake_width = 300
+                # distance damping as a consequence of the medium (sea water)
+                amp *= np.exp(-dist / 2000)
 
-            # gaussian shape, inside the shape is strong signal, outside the shape is weak signal
-            amp *= np.exp(-(d / pancake_width)**2)
+                # projects detector on shower plane to get the distance along the pancake shape
+                d = np.dot(r_vec, direction)
+                pancake_width = 300
+
+                # gaussian shape, inside the shape is strong signal, outside the shape is weak signal
+                amp *= np.exp(-(d / pancake_width)**2)
 
         signals.append(amp)
 
     return np.array(signals)
 
+# =====================
+# SINGLE PULSE AT POSITION
+# =====================
+def compute_pulse_at_position(detector_pos, source_pos, direction, Edep):
+    """
+    Compute the full acoustic pulse (time vs amplitude) at a single detector position.
+    """
+    # gives pulse
+    pulse = ACpulse()
+
+    # vector from source to detector
+    r_vec = detector_pos - source_pos
+
+    # distance along the shower axis 
+    Z = np.dot(r_vec, direction)
+
+    # apply same Z-cut as in signal model
+    if Z < -10 or Z > 50:
+        print("Chosen detector is outside shower region → no signal")
+        return None, None
+
+    # radial distance to shower axis
+    R = np.sqrt(r_vec[0]**2 + r_vec[1]**2)
+
+    # set detector position in ACpulse coordinates
+    pulse.hydrophonePosition([R, Z])
+    # decides how strong the pulse is
+    pulse.shower_energy(Edep)
+
+    # gets the signal/ waveform at that position
+    time_array, signal = pulse.getSignal()
+
+    return time_array, signal
 
 # =====================
 # MAIN
@@ -291,7 +332,41 @@ def main():
     y_line = y0 + t * direction[1]
     z_line = z0 + t * direction[2]
     ax.plot(x_line, y_line, z_line, color='cyan', linestyle='--', label='Shower axis')
-    
+
+
+    # =====================
+    # TEST: SINGLE PULSE AT USER-DEFINED POSITION
+    # =====================
+
+    # choose a detector position (example: directly above origin at z=100)
+    test_detector = detector_position
+
+    print("\nComputing pulse at test position:", test_detector)
+
+    time_array, signal = compute_pulse_at_position(
+        test_detector,
+        source_pos,
+        direction,
+        Edep
+    )
+    # only plot if inside shower region
+    if time_array is not None:
+        plt.figure(figsize=(10, 5))
+
+        # covert time to microseconds for better visualization
+        time_array = time_array * 1e6
+
+        # covert pressure to mPa
+        signal = signal * 1e3
+
+        plt.plot(time_array, signal)
+        plt.xlim(-1000, 1000)  # zoom around the peak
+        plt.xlabel("Time [µs]")
+        plt.ylabel("Amplitude [mPa]")
+        plt.title("Acoustic Pulse at Selected Detector Position")
+        plt.grid()
+        plt.show()
+
     
     # labels and title
     ax.set_title("Directional Acoustic Detector Response")
@@ -301,6 +376,7 @@ def main():
 
     ax.legend()
     plt.show()
+
 
     # shows the runtime of the program to get an idea of the performance
     total_time = time.time() - start_time
