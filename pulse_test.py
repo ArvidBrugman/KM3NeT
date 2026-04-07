@@ -30,8 +30,8 @@ Edep = 1e20
 # thats namely perpendicular to the direction of the neutrino
 # angle w.r.t. z-axis
 theta_dir = 0
-# rotation angle in xy-plane
-phi_dir = np.pi / 3
+# rotation angle in xy-plane (fill in with e.g. np.pi / 4)
+phi_dir = np.pi / 2
 
 # Calibration files
 CALIB_NPY = "calibration.npy"
@@ -75,7 +75,8 @@ def get_direction_vector(theta, phi):
     # spherical to cartesian coordinate transformation
     vx = np.sin(theta) * np.cos(phi)
     vy = np.sin(theta) * np.sin(phi)
-    vz = np.cos(theta)
+    # theta = 0 gives arrow pointing downwards
+    vz = -np.cos(theta)
 
     v = np.array([vx, vy, vz])
     # normalize the vector to have length 1
