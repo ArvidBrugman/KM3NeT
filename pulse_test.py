@@ -296,9 +296,6 @@ def main():
     # convert to mPa for better visualization
     signals_mPa = signals * 1000
 
-    # replace zeros with very small value for log scale
-    signals_mPa[signals_mPa <= 0] = 1e-9
-
     # ordens the data for plotting
     x = detector_positions[:, 0]
     y = detector_positions[:, 1]
@@ -321,7 +318,8 @@ def main():
 
     # plot selected detector position (for pulse analysis)
     ax.scatter(detector_position[0], detector_position[1],
-    detector_position[2], color='white', edgecolor='black',
+    detector_position[2], color='green', 
+    edgecolors='black',
     s=120, label='Selected detector')
 
     # Plot shower direction as a vector (arrow)
@@ -348,9 +346,6 @@ def main():
     # =====================
     # TEST: SINGLE PULSE AT USER-DEFINED POSITION
     # =====================
-
-    # choose a detector position (example: directly above origin at z=100)
-    detector_position = detector_position
 
     print("\nComputing pulse at test position:", detector_position)
 
