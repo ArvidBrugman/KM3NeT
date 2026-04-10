@@ -16,7 +16,7 @@ z_step = 1000
 
 # Particle position (cylindrical coordinates)
 r_particle = 1500
-theta_particle = np.pi / 4
+theta_particle = np.pi / 3
 z_particle = 1000
 
 # Energy shower
@@ -103,6 +103,34 @@ def get_direction_vector(theta, phi):
     v = np.array([vx, vy, vz])
     # normalize the vector to have length 1
     return v / np.linalg.norm(v)
+
+
+# =====================
+# ROTATION MATRIX
+# =====================
+def get_rotation_matrix(direction):
+    # we want to rotate the coordinate system such that the shower direction aligns with the z-axis
+    z_axis = np.array([0, 0, -1])
+
+    # cross product gives the axis of rotation, dot product gives the cosine of the angle between the vectors
+    v = np.cross(direction, z_axis)
+    c = np.dot(direction, z_axis)
+
+    # when shower is already along z-axis, no rotation needed, return identity matrix
+    if np.linalg.norm(v) < 1e-8:
+        # eye is the identity matrix, which means no rotation
+        return np.eye(3)
+
+    # skew-symmetric cross-product matrix for the rotation axis
+    vx = np.array([
+        [0, -v[2], v[1]],
+        [v[2], 0, -v[0]],
+        [-v[1], v[0], 0]
+    ])
+
+    # Rodrigues' rotation formula to get the rotation matrix
+    R = np.eye(3) + vx + vx @ vx * ((1 - c) / (np.linalg.norm(v)**2))
+    return R
 
 
 # =====================
@@ -199,7 +227,7 @@ def interpolate_amplitude(R, Z, calibration_data):
 # =====================
 # SIGNAL COMPUTATION
 # =====================
-def compute_signals(detector_positions, source_pos, calibration_data, direction):
+def compute_signals(detector_positions, source_pos, calibration_data, rotation_matrix):
 
     signals = []
     # calculates the signal for every detector
@@ -214,14 +242,15 @@ def compute_signals(detector_positions, source_pos, calibration_data, direction)
         if dist == 0:
             amp = calibration_data[0,2]
         else:
-            # distance to shower axis (radial)
-            R = np.sqrt(r_vec[0]**2 + r_vec[1]**2)
+        # rotate into shower frame
+            r_rot = rotation_matrix @ r_vec
 
-            # distance along the shower axis 
-            Z = np.dot(r_vec, direction)
+            # now shower is along z-axis
+            R = np.sqrt(r_rot[0]**2 + r_rot[1]**2)
+            Z = r_rot[2]
 
             # Z-cut/R-cut: skip regions where signal is negligible
-            if Z < -10 or Z > 50 or R > 2000:
+            if abs(Z) > 600 or R > 2000:
                 amp = 0
             else:
                 # what will ACpulse give us at that point based on the calibration data
@@ -231,7 +260,7 @@ def compute_signals(detector_positions, source_pos, calibration_data, direction)
                 amp *= np.exp(-dist / 2000)
 
                 # projects detector on shower plane to get the distance along the pancake shape
-                d = np.dot(r_vec, direction)
+                d = Z
                 pancake_width = 300
 
                 # gaussian shape, inside the shape is strong signal, outside the shape is weak signal
@@ -244,7 +273,7 @@ def compute_signals(detector_positions, source_pos, calibration_data, direction)
 # =====================
 # SINGLE PULSE AT POSITION
 # =====================
-def compute_pulse_at_position(detector_pos, source_pos, direction, Edep):
+def compute_pulse_at_position(detector_pos, source_pos, rotation_matrix, Edep):
     """
     Compute the full acoustic pulse (time vs amplitude) at a single detector position.
     """
@@ -254,16 +283,15 @@ def compute_pulse_at_position(detector_pos, source_pos, direction, Edep):
     # vector from source to detector
     r_vec = detector_pos - source_pos
 
-    # distance along the shower axis 
-    Z = np.dot(r_vec, direction)
+    r_rot = rotation_matrix @ r_vec
+
+    R = np.sqrt(r_rot[0]**2 + r_rot[1]**2)
+    Z = r_rot[2]
 
     # apply same Z-cut as in signal model
-    if Z < -10 or Z > 50:
+    if abs(Z) > 600 or R > 2000:
         print("Chosen detector is outside shower region → no signal")
         return None, None
-
-    # radial distance to shower axis
-    R = np.sqrt(r_vec[0]**2 + r_vec[1]**2)
 
     # set detector position in ACpulse coordinates
     pulse.hydrophonePosition([R, Z])
@@ -292,7 +320,7 @@ def main():
     max_radius,
     max_height,
     z_step,
-    ax  # 👈 deze toevoegen!
+    ax 
 )
 
     # converts neutrino position from cylindrical to cartesian coordinates
@@ -305,13 +333,14 @@ def main():
 
     # decides the direction of the shower and how the pancake will be oriented in space
     direction = get_direction_vector(theta_dir, phi_dir)
+    rotation_matrix = get_rotation_matrix(direction)
 
     # calibration data if its there
     calibration_data = get_calibration(Edep)
 
     # calculate for every detector position what the signal strength will be based on the distance to the shower and the orientation of the shower
     print("Computing signals...")
-    signals = compute_signals(detector_positions, source_pos, calibration_data, direction)
+    signals = compute_signals(detector_positions, source_pos, calibration_data, rotation_matrix)
 
     # convert to mPa for better visualization
     signals_mPa = signals * 1000
@@ -369,11 +398,11 @@ def main():
     print("\nComputing pulse at test position:", detector_position)
 
     time_array, signal = compute_pulse_at_position(
-        detector_position,
-        source_pos,
-        direction,
-        Edep
-    )
+    detector_position,
+    source_pos,
+    rotation_matrix,
+    Edep
+)
     # only plot if inside shower region
     if time_array is not None:
         fig2, ax2 = plt.subplots(figsize=(10, 5))
