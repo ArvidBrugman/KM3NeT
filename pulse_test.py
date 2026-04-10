@@ -310,7 +310,7 @@ def main():
 
 
     # makes a colorbar to show the scale of the signal strength
-    cbar = plt.colorbar(sc, ax=ax)
+    cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("Signal Amplitude [mPa]")
 
     # plots the position of the neutrino
@@ -332,8 +332,7 @@ def main():
         length=arrow_length,
         color='cyan',
         linewidth=2,
-        normalize=True,
-        label='Shower direction')
+        normalize=True, label='Shower direction')
 
     # shows the shower axis with a dashed line
     t = np.linspace(-2000, 2000, 100)
@@ -357,21 +356,17 @@ def main():
     )
     # only plot if inside shower region
     if time_array is not None:
-        plt.figure(figsize=(10, 5))
+        fig2, ax2 = plt.subplots(figsize=(10, 5))
 
-        # covert time to microseconds for better visualization
         time_array = time_array * 1e6
-
-        # covert pressure to mPa
         signal = signal * 1e3
 
-        plt.plot(time_array, signal)
-        plt.xlim(-1000, 1000)  # zoom around the peak
-        plt.xlabel("Time [µs]")
-        plt.ylabel("Amplitude [mPa]")
-        plt.title("Acoustic Pulse at Selected Detector Position")
-        plt.grid()
-        plt.show()
+        ax2.plot(time_array, signal)
+        ax2.set_xlim(-1000, 1000)
+        ax2.set_xlabel("Time [µs]")
+        ax2.set_ylabel("Amplitude [mPa]")
+        ax2.set_title("Acoustic Pulse at Selected Detector Position")
+        ax2.grid()
 
     
     # labels and title
@@ -380,7 +375,12 @@ def main():
     ax.set_ylabel("Y [m]")
     ax.set_zlabel("Z [m]")
 
-    ax.legend()
+    ax.legend(
+    loc='upper left',
+    bbox_to_anchor=(0.90, 1.17),
+    borderaxespad=0.)
+
+    plt.subplots_adjust(right=0.85, top=0.9)
     plt.show()
 
 
