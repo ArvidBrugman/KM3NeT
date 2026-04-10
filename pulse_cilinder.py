@@ -220,8 +220,8 @@ def compute_signals(detector_positions, source_pos, calibration_data, direction)
             # distance along the shower axis 
             Z = np.dot(r_vec, direction)
 
-            # Z-cut: skip regions where signal is negligible
-            if Z < -10 or Z > 50:
+            # Z-cut/R-cut: skip regions where signal is negligible
+            if Z < -10 or Z > 50 or R > 2000:
                 amp = 0
             else:
                 # what will ACpulse give us at that point based on the calibration data
