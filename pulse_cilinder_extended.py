@@ -32,7 +32,7 @@ detector_position = np.array([0, 0, 1000])
 # this together gives the start of the pancake shape
 # thats namely perpendicular to the direction of the neutrino
 # angle w.r.t. z-axis
-theta_dir = 0
+theta_dir = np.pi / 3
 # rotation angle in xy-plane (fill in with e.g. np.pi / 4)
 phi_dir = np.pi / 2
 
@@ -110,7 +110,7 @@ def get_direction_vector(theta, phi):
 # =====================
 def get_rotation_matrix(direction):
     # we want to rotate the coordinate system such that the shower direction aligns with the z-axis
-    z_axis = np.array([0, 0, -1])
+    z_axis = np.array([0, 0, 1])
 
     # cross product gives the axis of rotation, dot product gives the cosine of the angle between the vectors
     v = np.cross(direction, z_axis)
