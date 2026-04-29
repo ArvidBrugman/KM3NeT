@@ -422,7 +422,7 @@ def update_info(clickData, t_current_ms):
     # where the signal is significantly larger then the rest
     mask = np.abs(s) > 0.3 * np.max(np.abs(s))
 
-    #
+    # this is were
     if np.any(mask):
         t_min = t[mask].min()
         t_max = t[mask].max()
