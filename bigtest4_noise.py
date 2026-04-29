@@ -422,15 +422,16 @@ def update_info(clickData, t_current_ms):
     # where the signal is significantly larger then the rest
     mask = np.abs(s) > 0.3 * np.max(np.abs(s))
 
-    # this is were
+    # takes only time were the singal is
     if np.any(mask):
         t_min = t[mask].min()
         t_max = t[mask].max()
+    # otherwise when no clear signal, taken around arrival time
     else:
         t_min = arrival - 0.5
         t_max = arrival + 0.5
 
-    # 
+    # plot layout settings
     fig1.update_layout(
         title=f"Detector {idx}",
         xaxis=dict(
@@ -444,14 +445,15 @@ def update_info(clickData, t_current_ms):
         legend=dict(x=0.01, y=0.99)
     )
 
-    # ===== Gaussian fit =====
+    # Gaussian fit, mhu = average, sigma = spread
     mu, sigma = norm.fit(n)
 
-    # histogram data (voor mooie fit lijn)
+    # Histogram distribution of the noise
     hist_vals, bin_edges = np.histogram(n, bins=80, density=True)
+    # takes the middle of every bin
     bin_centers = 0.5 * (bin_edges[1:] + bin_edges[:-1])
 
-    # gaussian curve
+    # theoretical gaussian curve, to compare if the noise is gaussian distributed
     gauss = norm.pdf(bin_centers, mu, sigma)
 
     fig2 = go.Figure()
@@ -464,7 +466,7 @@ def update_info(clickData, t_current_ms):
         name="Noise distribution"
     ))
 
-    # gaussian fit lijn
+    # gaussian fit line
     fig2.add_trace(go.Scatter(
         x=bin_centers,
         y=gauss,
@@ -473,7 +475,7 @@ def update_info(clickData, t_current_ms):
         line=dict(color='red', width=3)
     ))
 
-    # layout met labels + sigma
+    # layout with labels/title
     fig2.update_layout(
         title=f"Noise distribution (μ = {mu:.2f}, σ = {sigma:.2f} mPa)",
         xaxis_title="Amplitude [mPa]",
@@ -481,7 +483,7 @@ def update_info(clickData, t_current_ms):
         legend=dict(x=0.7, y=0.95)
     )
 
-    # ===== STACKING MET CORRECTE TIME ALIGNMENT =====
+    # stacking uses seconds instead of ms
     t_current = t_current_ms / 1000
 
     # we select the detectors that have received the signal by the current time, and are within the z_threshold of the particle (pancake selection)
@@ -489,29 +491,34 @@ def update_info(clickData, t_current_ms):
         if d["arrival"] < t_current
         and abs(d["pos"][2] - z0) < z_threshold]
 
-    # focus alleen op relevante tijd rond pulse
-    t_ref = np.linspace(-0.002, 0.002, len(t_vals))  # ±2 ms window
+    # focus only on the relevant time around the pulse
+    t_ref = np.linspace(-0.002, 0.002, len(t_vals))  
+    # initialize stack
     stack = np.zeros_like(t_ref)
     count = 0
 
+    # loop over detectecors
     for i in active_indices:
         d2 = detector_data[i]
 
-        total = d2["signal"] * 5 + d2["noise"]  # versterk signaal voor zichtbaarheid
+        # signal strengtened for better visibility
+        total = d2["signal"] * 5 + d2["noise"]  
 
-        # verschuif tijd zodat arrival = 0
+        # signal peak aligments such that arrival = 0, so peaks are stacked
         t_shifted = d2["time"] - d2["arrival"]
 
-        # interpoleer naar referentie grid
+        # interpolate to reference grid
         aligned = np.interp(t_ref, t_shifted, total, left=0, right=0)
 
+        # summation 
         stack += aligned
         count += 1
 
+    # normalization fysiscal correct takes noise ~ sqrt(N)
     if count > 0:
-        stack /= np.sqrt(count)   # fysisch correct (ruis ~ sqrt(N))
+        stack /= np.sqrt(count)   
 
-    # ===== PLOT =====
+    # stack plot
     fig3 = go.Figure()
 
     fig3.add_trace(go.Scatter(
@@ -527,6 +534,7 @@ def update_info(clickData, t_current_ms):
         yaxis_title="Amplitude [a.u.]"
     )
 
+    # info panel
     extra_info = base_info + [
         html.Hr(),
         html.H4(f"Selected detector {idx}"),
