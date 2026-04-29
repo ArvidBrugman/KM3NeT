@@ -50,11 +50,11 @@ class ACpulse:
         
         self.r_min = 0. #cm
         self.r_max = 100. #cm
-        self.Rbins = 100
+        self.Rbins = 50
 
         self.z_min = 0. #cm 
         self.z_max = 50000. #cm
-        self.Zbins = 1e2
+        self.Zbins = 50
         #        self.z_min = 0
         self.z_max = 5000
 
@@ -156,7 +156,7 @@ class ACpulse:
         #       Exyz is a scaled version of the Velocity Potential
         # SD Last mod 7/7/08, python code by EJB
 
-        nr = 50
+        nr = 25
         fs = self.Fs
 
         # binning of the time trace

@@ -377,6 +377,7 @@ def main():
 
     ax.legend(
     loc='upper left',
+    # 0.90 is perfect, 0.95 is more to the right than 0.90
     bbox_to_anchor=(0.90, 1.17),
     borderaxespad=0.)
 
