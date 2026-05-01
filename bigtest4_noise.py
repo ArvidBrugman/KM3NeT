@@ -79,21 +79,15 @@ def load_pulse_interpolator():
         fill_value=0
     ), data["t"], data["R"], data["Z"]
 
-# we do the same for noise, so we can add realistic noise to the signal for each detector
-def load_noise_interpolator():
+# load the noise data
+def load_noise_data():
     data = np.load("noise.npz")
-
-    return RegularGridInterpolator(
-        (data["R"], data["Z"]),
-        data["noise"],
-        bounds_error=False,
-        fill_value=0
-    )
+    return data["noise"]
 
 # =====================
 # COMPUTE
 # =====================
-def compute_all(detector_positions, source_pos, interpolator, noise_interp, t_vals, R_vals, Z_vals):
+def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals, R_vals, Z_vals):
 
     detector_data = []
     amplitudes = []
@@ -110,15 +104,17 @@ def compute_all(detector_positions, source_pos, interpolator, noise_interp, t_va
         R = np.linalg.norm(r_vec[:2])
         Z = r_vec[2]
 
-        # if the detector is outside the precomputed grid (grid made in the pulses.npz file), we set the signal to zero
+        # always noise generated (independent of the signal location)
+        i_rand = np.random.randint(0, noise_data.shape[0])
+        j_rand = np.random.randint(0, noise_data.shape[1])
+        noise = noise_data[i_rand, j_rand, :]
+        noise = noise * (0.01 / np.std(noise))
+
         if (R < R_vals.min() or R > R_vals.max() or
             Z < Z_vals.min() or Z > Z_vals.max()):
             signal = np.zeros_like(t_vals)
-            noise = np.zeros_like(t_vals)
-        # otherwise we interpolate the signal and noise for this (R,Z) position
         else:
             signal = interpolator([[R, Z]])[0]
-            noise = noise_interp([[R, Z]])[0]
 
         # shift the time axis so that t=0 corresponds to the arrival time of the signal at the detector
         t_shifted = t_vals + arrival
@@ -161,14 +157,14 @@ source_pos = np.array([x0, y0, z0])
 
 # load the interpolators for signal and noise, and compute the signal, noise, arrival times and amplitudes for all detectors
 interp, t_vals, R_vals, Z_vals = load_pulse_interpolator()
-noise_interp = load_noise_interpolator()
+noise_data = load_noise_data()
 
 # we compute the signal, noise, arrival times and amplitudes for all detectors
 detector_data, amplitudes, arrival_times = compute_all(
     detector_positions,
     source_pos,
     interp,
-    noise_interp,
+    noise_data,
     t_vals,
     R_vals,
     Z_vals
@@ -304,7 +300,7 @@ def update_3d(t_current_ms, clickData):
             name="Selected detector"
         ))
 
-    # we also add the position of the neutrino interaction as a red marker
+    # we also add the position of the neutrino interaction as a red marker 
     fig.add_trace(go.Scatter3d(
         x=[x0], y=[y0], z=[z0],
         mode='markers',
@@ -501,8 +497,8 @@ def update_info(clickData, t_current_ms):
     for i in active_indices:
         d2 = detector_data[i]
 
-        # signal strengtened for better visibility
-        total = d2["signal"] * 5 + d2["noise"]  
+        # signal and noise for this detector
+        total = d2["signal"] + d2["noise"]  
 
         # signal peak aligments such that arrival = 0, so peaks are stacked
         t_shifted = d2["time"] - d2["arrival"]
