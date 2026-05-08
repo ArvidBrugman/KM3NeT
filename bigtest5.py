@@ -5,6 +5,8 @@ import dash
 from dash import dcc, html
 from dash.dependencies import Input, Output
 
+from scipy import signal
+from scipy import signal
 from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import norm 
 
@@ -94,11 +96,38 @@ def compute_chi2_simple(signal, noise, t_vals):
     if sigma == 0:
         return np.inf, np.inf, 0
 
-    # tijdvenster rond puls (1 ms)
-    window = 0.001  # seconden
+    # take 10% of the peak hight as a threshold to select the time window around the signal
+    threshold = 0.1 * np.max(np.abs(signal))
 
-    # omdat arrival al in tijd zit verwerkt → puls zit rond t=0
-    mask = np.abs(t_vals) < window
+    # True when signal is above the threshold, False otherwise
+    above = np.abs(signal) > threshold
+    # gives the indices where the signal is above the threshold
+    indices = np.where(above)[0]
+
+    # len > 0  because otherwise there is no signal found in the code
+    if len(indices) > 0:
+        # first time the signal is above the threshold
+        i_start = indices[0]
+        # last time the signal is above the threshold
+        i_end   = indices[-1]
+
+        # take a margin to be sure (e.g. ~0.03 ms)
+        margin_time = 0.00003
+        # time between two points
+        dt = t_vals[1] - t_vals[0]
+        # convert margin time to number of indices
+        margin_idx = int(margin_time / dt)
+        # creates the margin around the signal
+        i_start = max(0, i_start - margin_idx)
+        i_end   = min(len(t_vals) - 1, i_end + margin_idx)
+
+        # takes every point in the window with True as the signal is above the threshold, and False outside the window
+        mask = np.zeros_like(t_vals, dtype=bool)
+        mask[i_start:i_end+1] = True
+
+    else:
+        # fallback
+        mask = np.abs(t_vals) < 0.001
 
     y_sel = y[mask]
     s_sel = signal[mask]
@@ -108,7 +137,7 @@ def compute_chi2_simple(signal, noise, t_vals):
 
     delta_chi2 = chi2_h0 - chi2_h1
 
-    return chi2_h0, chi2_h1, delta_chi2
+    return chi2_h0, chi2_h1, delta_chi2, mask
 
 def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals, R_vals, Z_vals):
 
@@ -145,7 +174,7 @@ def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals
         # compute the ampltude as the peak-to-peak value of the signal (without noise)
         amp = np.max(signal) - np.min(signal)
 
-        chi2_h0, chi2_h1, delta_chi2 = compute_chi2_simple(signal, noise, t_vals)
+        chi2_h0, chi2_h1, delta_chi2, mask = compute_chi2_simple(signal, noise, t_vals)
 
         detector_data.append({
             "id": i,
@@ -158,7 +187,8 @@ def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals
             "arrival": arrival,
             "chi2_h0": chi2_h0,
             "chi2_h1": chi2_h1,
-            "delta_chi2": delta_chi2
+            "delta_chi2": delta_chi2,
+            "mask": mask
         })
 
         amplitudes.append(amp)
@@ -399,6 +429,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     chi2_h0 = d["chi2_h0"]
     chi2_h1 = d["chi2_h1"]
     dchi2 = d["delta_chi2"]
+    mask = d["mask"]
 
     # we convert the time to ms and the signal and noise to mPa for better visualization in the plots
     t = d["time"] * 1e3
@@ -433,6 +464,40 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # not to small aswell
     ymax = max(ymax, 5)
 
+
+
+
+    t_vals = (d["time"] - d["arrival"]) * 1e3   # ms rond 0
+    t_plot = d["time"] * 1e3                    # ms absolute tijd
+
+    t_start = t_plot[mask][0]
+    t_end   = t_plot[mask][-1]
+
+    fig1.add_trace(go.Scatter(
+        x=[t_start, t_start],
+        y=[-1.3*ymax, 1.3*ymax],
+        mode='lines',
+        line=dict(color='purple', dash='dot'),
+        name='Window start'
+    ))
+
+    fig1.add_trace(go.Scatter(
+        x=[t_end, t_end],
+        y=[-1.3*ymax, 1.3*ymax],
+        mode='lines',
+        line=dict(color='purple', dash='dot'),
+        name='Window end'
+    ))
+
+
+
+
+
+
+
+
+
+
     # noise (transparent, then signal is better visible)
     fig1.add_trace(go.Scatter(
         x=t, y=n,
@@ -462,12 +527,13 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 
     # smart zoom focussing on signal already
     # where the signal is significantly larger then the rest
-    mask = np.abs(s) > 0.3 * np.max(np.abs(s))
+    signal_mask = np.abs(s) > 0.3 * np.max(np.abs(s))
+    
 
     # takes only time were the signal is
-    if np.any(mask):
-        t_min = t[mask].min()
-        t_max = t[mask].max()
+    if np.any(signal_mask):
+        t_min = t[signal_mask].min()
+        t_max = t[signal_mask].max()
     # otherwise when no clear signal, taken around arrival time
     else:
         t_min = arrival - 0.5
