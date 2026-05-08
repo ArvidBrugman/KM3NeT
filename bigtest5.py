@@ -90,48 +90,24 @@ def load_noise_data():
 # COMPUTE
 # =====================
 def compute_chi2_simple(signal, noise, t_vals):
+
     y = signal + noise
     sigma = np.std(noise)
 
     if sigma == 0:
-        return np.inf, np.inf, 0
+        return np.inf, np.inf, 0, None
 
-    # take 10% of the peak hight as a threshold to select the time window around the signal
-    threshold = 0.1 * np.max(np.abs(signal))
+    # vast window van ±0.2 ms rond arrival (= t=0)
+    window_half_width = 0.0002   # seconden
 
-    # True when signal is above the threshold, False otherwise
-    above = np.abs(signal) > threshold
-    # gives the indices where the signal is above the threshold
-    indices = np.where(above)[0]
+    # mask rond arrival
+    mask = np.abs(t_vals) < window_half_width
 
-    # len > 0  because otherwise there is no signal found in the code
-    if len(indices) > 0:
-        # first time the signal is above the threshold
-        i_start = indices[0]
-        # last time the signal is above the threshold
-        i_end   = indices[-1]
-
-        # take a margin to be sure (e.g. ~0.03 ms)
-        margin_time = 0.00003
-        # time between two points
-        dt = t_vals[1] - t_vals[0]
-        # convert margin time to number of indices
-        margin_idx = int(margin_time / dt)
-        # creates the margin around the signal
-        i_start = max(0, i_start - margin_idx)
-        i_end   = min(len(t_vals) - 1, i_end + margin_idx)
-
-        # takes every point in the window with True as the signal is above the threshold, and False outside the window
-        mask = np.zeros_like(t_vals, dtype=bool)
-        mask[i_start:i_end+1] = True
-
-    else:
-        # fallback
-        mask = np.abs(t_vals) < 0.001
-
+    # selecteer alleen data in het window
     y_sel = y[mask]
     s_sel = signal[mask]
 
+    # chi2 berekeningen
     chi2_h0 = np.sum((y_sel)**2) / sigma**2
     chi2_h1 = np.sum((y_sel - s_sel)**2) / sigma**2
 
@@ -289,6 +265,7 @@ app.layout = html.Div([
     # spacing between 3D plot and the plots below
     html.Div([
         dcc.Graph(id="waveform"),
+        dcc.Graph(id="combined-waveform"),
         dcc.Graph(id="noise-hist"),
         dcc.Graph(id="stack-plot"),
         dcc.Graph(id="delta-chi2-hist")
@@ -386,6 +363,7 @@ def update_3d(t_current_ms, clickData):
 # this callback updates the info panel and the 3 plots (waveform, noise histogram and stack plot) based on the selected detector in the 3D plot and the current time from the slider
 @app.callback(
     [Output("waveform", "figure"),
+     Output("combined-waveform", "figure"),
      Output("noise-hist", "figure"),
      Output("stack-plot", "figure"),
      Output("delta-chi2-hist", "figure"),
@@ -421,7 +399,14 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 
     # niets geselecteerd
     if selected_idx is None:
-        return go.Figure(), go.Figure(), go.Figure(), go.Figure(), base_info
+        return (
+    go.Figure(),
+    go.Figure(),
+    go.Figure(),
+    go.Figure(),
+    go.Figure(),
+    base_info
+)
 
     idx = selected_idx
 
@@ -449,7 +434,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     fig1 = go.Figure()
 
     # focus around the arrival time of the signal
-    window = np.abs(t - arrival) < 2.0
+    window = mask
 
     # hard code against outliers, so not to big and not to small either
     if np.any(window):
@@ -466,12 +451,8 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 
 
 
-
-    t_vals = (d["time"] - d["arrival"]) * 1e3   # ms rond 0
-    t_plot = d["time"] * 1e3                    # ms absolute tijd
-
-    t_start = t_plot[mask][0]
-    t_end   = t_plot[mask][-1]
+    t_start = arrival - 0.2
+    t_end   = arrival + 0.2
 
     fig1.add_trace(go.Scatter(
         x=[t_start, t_start],
@@ -542,6 +523,68 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # plot layout settings
     fig1.update_layout(
         title=f"Detector {idx}",
+        xaxis=dict(
+            range=[t_min - 0.2, t_max + 0.2],
+            title="Time [ms]"
+        ),
+        yaxis=dict(
+            range=[-1.3*ymax, 1.3*ymax],
+            title="Amplitude [mPa]"
+        ),
+        legend=dict(x=0.01, y=0.99)
+    )
+
+        # =====================
+    # COMBINED SIGNAL + NOISE
+    # =====================
+
+    fig_combined = go.Figure()
+
+    fig_combined.add_trace(go.Scatter(
+        x=t,
+        y=total,
+        mode='lines',
+        name='Signal + Noise',
+        line=dict(color='darkblue', width=2)
+    ))
+
+    # arrival line
+    fig_combined.add_trace(go.Scatter(
+        x=[arrival, arrival],
+        y=[-1.3*ymax, 1.3*ymax],
+        mode='lines',
+        line=dict(color='red', dash='dash'),
+        name='Arrival'
+    ))
+
+    # peak line
+    fig_combined.add_trace(go.Scatter(
+        x=[peak_time, peak_time],
+        y=[-1.3*ymax, 1.3*ymax],
+        mode='lines',
+        line=dict(color='green', dash='dot'),
+        name='Peak'
+    ))
+
+
+    fig_combined.add_trace(go.Scatter(
+    x=[t_start, t_start],
+    y=[-1.3*ymax, 1.3*ymax],
+    mode='lines',
+    line=dict(color='purple', dash='dot'),
+    name='Window start'
+))
+
+    fig_combined.add_trace(go.Scatter(
+        x=[t_end, t_end],
+        y=[-1.3*ymax, 1.3*ymax],
+        mode='lines',
+        line=dict(color='purple', dash='dot'),
+        name='Window end'
+    ))
+
+    fig_combined.update_layout(
+        title=f"Detector {idx}: Signal + Noise",
         xaxis=dict(
             range=[t_min - 0.2, t_max + 0.2],
             title="Time [ms]"
@@ -689,7 +732,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 
 
 
-    return fig1, fig2, fig3, fig4, extra_info
+    return fig1, fig_combined, fig2, fig3, fig4, extra_info
 
 # =====================
 # RUN
