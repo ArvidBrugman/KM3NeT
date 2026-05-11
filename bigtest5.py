@@ -6,7 +6,6 @@ from dash import dcc, html
 from dash.dependencies import Input, Output
 
 from scipy import signal
-from scipy import signal
 from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import norm 
 
@@ -204,6 +203,43 @@ detector_data, amplitudes, arrival_times = compute_all(
     Z_vals
 )
 
+# =====================
+# GLOBAL CHI2
+# =====================
+
+# only detectors close to the pancake
+chi2_detectors = [
+    d for d in detector_data
+    if abs(d["Z"]) < z_threshold
+    and np.max(np.abs(d["signal"])) > np.std(d["noise"])
+]
+
+# global chi2 sums
+global_chi2_h0 = np.sum([d["chi2_h0"] for d in chi2_detectors])
+
+global_chi2_h1 = np.sum([d["chi2_h1"] for d in chi2_detectors])
+
+global_delta_chi2 = np.sum([d["delta_chi2"] for d in chi2_detectors])
+
+# =====================
+# REDUCED CHI2
+# =====================
+
+# number of samples inside the fitting window
+n_samples = np.sum(detector_data[0]["mask"])
+
+# total number of detectors
+n_detectors = len(chi2_detectors)
+
+# total degrees of freedom
+ndof = n_samples * n_detectors
+
+# reduced chi2
+reduced_chi2_h0 = global_chi2_h0 / ndof
+
+reduced_chi2_h1 = global_chi2_h1 / ndof
+
+
 # we convert the amplitudes to mPa for better visualization in the app
 amps = amplitudes * 1000
 # size of the time step (we assume uniform)
@@ -380,12 +416,32 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # base info for statistical info about the detector
     base_info = [
         html.H3("Detector Info"),
+
         html.P(f"Total detectors: {detector_count}"),
         html.P(f"Lines: {line_count}"),
         html.P(f"Detectors/line: {detectors_per_line}"),
         html.P(f"Cable length: {total_cable_km:.1f} km"),
-    ]
 
+        html.Hr(),
+
+        html.H4("Global fit"),
+
+        html.P(f"Global χ² (H0) = {global_chi2_h0:.1f}"),
+
+        html.P(f"Global χ² (H1) = {global_chi2_h1:.1f}"),
+
+        html.P(f"Global Δχ² = {global_delta_chi2:.1f}"),
+
+        html.Hr(),
+
+        html.H4("Reduced χ²"),
+
+        html.P(f"Reduced χ² (H0) = {reduced_chi2_h0:.3f}"),
+
+        html.P(f"Reduced χ² (H1) = {reduced_chi2_h1:.3f}"),
+
+        html.P(f"Degrees of freedom = {ndof}")]
+    
     # if no detector is selected, we return empty plots and just the base info
     selected_idx = None
 
