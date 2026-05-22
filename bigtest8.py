@@ -88,7 +88,7 @@ def load_noise_data():
 # =====================
 # COMPUTE
 # =====================
-def compute_chi2_simple(signal, noise, t_vals):
+def compute_chi2_simple(signal, noise, t_vals, arrival):
 
     y = signal + noise
     sigma = np.std(noise)
@@ -139,25 +139,32 @@ def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals
 
         if (R < R_vals.min() or R > R_vals.max() or
             Z < Z_vals.min() or Z > Z_vals.max()):
-            signal = np.zeros_like(t_vals)
-        else:
-            signal = interpolator([[R, Z]])[0]
 
-        # shift the time axis so that t=0 corresponds to the arrival time of the signal at the detector
-        t_shifted = t_vals + arrival
+            raw_signal = np.zeros_like(t_vals)
+
+        else:
+            raw_signal = interpolator([[R, Z]])[0]
+
+        # shift signal physically in time
+        signal = raw_signal
 
         # compute the ampltude as the peak-to-peak value of the signal (without noise)
         amp = np.max(signal) - np.min(signal)
 
-        chi2_h0, chi2_h1, delta_chi2, mask = compute_chi2_simple(signal, noise, t_vals)
+        chi2_h0, chi2_h1, delta_chi2, mask = compute_chi2_simple(
+        signal,
+        noise,
+        t_vals,
+        arrival
+    )
 
         detector_data.append({
             "id": i,
             "pos": pos,
             "R": R,
             "Z": Z,
-            "time": t_shifted,
-            "signal": signal,
+            "time": t_vals + arrival,
+            "signal": raw_signal,
             "noise": noise,
             "measured": signal + noise,
             "arrival": arrival,
@@ -252,10 +259,9 @@ dt = t_vals[1] - t_vals[0]
 # VERTEX RECONSTRUCTION (2D)
 # =====================
 
-# tests a grid of possible x and y positions for the source
-# (e.g. 60 x-positions and 60 y-positions between -3000 and 3000 m)
-x_scan = np.linspace(-3000, 3000, 20)
-y_scan = np.linspace(-3000, 3000, 20)
+# local scan
+x_scan = np.linspace(x0-1, x0+1, 20)
+y_scan = np.linspace(y0-1, y0+1, 20)
 
 # storage matrix for all global chi2 values
 # rows = y positions, columns = x positions
@@ -284,36 +290,52 @@ for iy, y_hyp in enumerate(y_scan):
             # vector from hypothesis position to detector
             r_vec = det_pos - hyp_pos
 
-            # convert to cylindrical coordinates
+            # arrival time for this hypothesis
+            arrival_hyp = np.linalg.norm(r_vec) / c_sound
+
+            # cylindrical coordinates
             R = np.linalg.norm(r_vec[:2])
             Z = r_vec[2]
 
-            # only interpolate inside the pulse grid
+            # interpolate waveform
             if (R < R_vals.min() or R > R_vals.max() or
                 Z < Z_vals.min() or Z > Z_vals.max()):
 
-                # outside interpolation grid → expected signal = 0
                 expected_signal = np.zeros_like(t_vals)
 
             else:
-                # inside interpolation grid → compute expected waveform
                 expected_signal = interp([[R, Z]])[0]
 
-            # measured detector waveform
-            # (signal + noise)
+            # detector time axis
+            measured_time = d["time"]
+
+            # measured waveform
             measured = d["measured"]
 
-            # noise sigma for chi2 normalization
-            sigma = np.std(d["noise"])
-
-            # waveform chi2 calculation for this detector
-            # and this hypothetical neutrino position
-            chi2 = np.sum(
-                (measured - expected_signal)**2
-                / sigma**2
+            # shifted hypothesis waveform
+            expected_shifted = np.interp(
+                measured_time,
+                t_vals + arrival_hyp,
+                expected_signal,
+                left=0,
+                right=0
             )
 
-            # add detector chi2 contribution to the global chi2
+            # signal-only mask
+            mask = np.abs(expected_shifted) > 0.1 * np.max(np.abs(expected_shifted))
+
+            # measured waveform
+            m = measured[mask]
+
+            # expected waveform
+            e = expected_shifted[mask]
+
+            sigma = np.std(d["noise"])
+
+            chi2 = np.sum(
+                (m - e)**2
+            ) / sigma**2
+
             global_chi2 += chi2
 
         # store global chi2 value in the 2D chi2 grid
@@ -331,6 +353,93 @@ delta_chi2_grid = chi2_grid - np.min(chi2_grid)
 best_y = y_scan[best_idx[0]]
 best_x = x_scan[best_idx[1]]
 
+
+# =====================
+# 1D X-SCAN
+# =====================
+
+# scan range in x
+x_scan_1d = np.linspace(x0 - 10, x0 + 10, 200)
+
+# store chi2 values
+chi2_x = []
+
+# keep y and z fixed
+y_fixed = y0
+z_fixed = z0
+
+# loop over hypothetical x positions
+for x_hyp in x_scan_1d:
+
+    # hypothetical source position
+    hyp_pos = np.array([x_hyp, y_fixed, z_fixed])
+
+    # global chi2 for this hypothesis
+    global_chi2 = 0
+
+    # loop over selected detectors
+    for d in chi2_detectors:
+
+        det_pos = d["pos"]
+
+        # vector detector - source
+        r_vec = det_pos - hyp_pos
+
+        # hypothetical arrival time
+        arrival_hyp = np.linalg.norm(r_vec) / c_sound
+
+        # cylindrical coordinates
+        R = np.linalg.norm(r_vec[:2])
+        Z = r_vec[2]
+
+        # interpolate expected waveform
+        if (R < R_vals.min() or R > R_vals.max() or
+            Z < Z_vals.min() or Z > Z_vals.max()):
+
+            expected_signal = np.zeros_like(t_vals)
+
+        else:
+            expected_signal = interp([[R, Z]])[0]
+
+        measured_time = d["time"]
+
+        measured = d["measured"]
+
+        # shift waveform
+        expected_shifted = np.interp(
+            measured_time,
+            t_vals + arrival_hyp,
+            expected_signal,
+            left=0,
+            right=0
+        )
+
+        # mask around signal
+        if np.max(np.abs(expected_shifted)) > 0:
+            mask = np.abs(expected_shifted) > (
+                0.1 * np.max(np.abs(expected_shifted))
+            )
+        else:
+            continue
+
+        m = measured[mask]
+        e = expected_shifted[mask]
+
+        sigma = np.std(d["noise"])
+
+        chi2 = np.sum((m - e)**2) / sigma**2
+
+        global_chi2 += chi2
+
+    chi2_x.append(global_chi2)
+
+chi2_x = np.array(chi2_x)
+
+# convert to delta chi2
+delta_chi2_x = chi2_x - np.min(chi2_x)
+
+# best fit
+best_x_1d = x_scan_1d[np.argmin(delta_chi2_x)]
 
 
 # =====================
@@ -388,12 +497,14 @@ app.layout = html.Div([
 
     # spacing between 3D plot and the plots below
     html.Div([
+        dcc.Graph(id="xscan-plot"),
         dcc.Graph(id="waveform"),
         dcc.Graph(id="combined-waveform"),
         dcc.Graph(id="noise-hist"),
         dcc.Graph(id="stack-plot"),
         dcc.Graph(id="delta-chi2-hist"),
-        dcc.Graph(id="vertex-reco")
+        dcc.Graph(id="vertex-reco"),
+        dcc.Graph(id="shift-test")        
     ], style={'marginTop': '20px'})
 
 ])
@@ -487,12 +598,14 @@ def update_3d(t_current_ms, clickData):
 # =====================
 # this callback updates the info panel and the 3 plots (waveform, noise histogram and stack plot) based on the selected detector in the 3D plot and the current time from the slider
 @app.callback(
-    [Output("waveform", "figure"),
+    [Output("xscan-plot", "figure"),
+    Output("waveform", "figure"),
      Output("combined-waveform", "figure"),
      Output("noise-hist", "figure"),
      Output("stack-plot", "figure"),
      Output("delta-chi2-hist", "figure"),
      Output("vertex-reco", "figure"),
+     Output("shift-test", "figure"),
      Output("info-panel", "children")],
 
     [Input("3d-plot", "clickData"),
@@ -552,6 +665,8 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     go.Figure(),
     go.Figure(),
     go.Figure(),
+    go.Figure(),
+    go.Figure(),
     base_info
 )
 
@@ -562,6 +677,32 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     chi2_h1 = d["chi2_h1"]
     dchi2 = d["delta_chi2"]
     mask = d["mask"]
+
+    # =====================
+    # BEST-FIT TEMPLATE
+    # =====================
+
+    # reconstructed best-fit source position
+    best_fit_pos = np.array([best_x, best_y, z0])
+
+    # vector from reconstructed vertex to detector
+    r_vec_fit = d["pos"] - best_fit_pos
+
+    # cylindrical coordinates
+    R_fit = np.linalg.norm(r_vec_fit[:2])
+    Z_fit = r_vec_fit[2]
+
+    # compute expected waveform from best-fit position
+    if (R_fit < R_vals.min() or R_fit > R_vals.max() or
+        Z_fit < Z_vals.min() or Z_fit > Z_vals.max()):
+
+        best_fit_signal = np.zeros_like(t_vals)
+
+    else:
+        best_fit_signal = interp([[R_fit, Z_fit]])[0]
+
+    # convert to mPa
+    best_fit_signal *= 1e3
 
     # we convert the time to ms and the signal and noise to mPa for better visualization in the plots
     t = d["time"] * 1e3
@@ -617,15 +758,6 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         name='Window end'
     ))
 
-
-
-
-
-
-
-
-
-
     # noise (transparent, then signal is better visible)
     fig1.add_trace(go.Scatter(
         x=t, y=n,
@@ -646,6 +778,20 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         mode='lines', line=dict(color='red', dash='dash'),
         name='Arrival'
     ))
+
+    # best fit
+    fig1.add_trace(go.Scatter(
+        x=t,
+        y=best_fit_signal,
+        mode='lines',
+        name='Best-fit template',
+        line=dict(
+            color='orange',
+            width=3,
+            dash='dash'
+        )
+    ))
+
     # peak line, dashed green
     fig1.add_trace(go.Scatter(
         x=[peak_time, peak_time], y=[-1.3*ymax, 1.3*ymax],
@@ -854,7 +1000,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 
         html.P(
             f"Reconstruction error = "
-            f"{np.sqrt((best_x-x0)**2 + (best_y-y0)**2):.1f} m"
+            f"{100*np.sqrt((best_x-x0)**2 + (best_y-y0)**2):.4f} cm"
         ),
     ]
 
@@ -896,7 +1042,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         x=x_scan,
         y=y_scan,
         z=delta_chi2_grid,
-        colorscale='Plasma',
+        colorscale='Inferno',
         colorbar=dict(
             title="Δχ²",
             y=0.45,
@@ -912,7 +1058,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         contours=dict(
         start=0,
         end=120,
-        size=15
+        size=5
     ),
         line=dict(width=1, color='white'),
         showscale=False
@@ -953,16 +1099,16 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         title="2D Vertex reconstruction",
 
         xaxis=dict(
-            title="Hypothesis x-position [m]",
-            range=[-3000, 3000]
-        ),
+        title="Hypothesis x-position [m]",
+        range=[x_scan.min(), x_scan.max()]
+    ),
 
-        yaxis=dict(
-            title="Hypothesis y-position [m]",
-            range=[-3000, 3000],
-            scaleanchor="x",
-            scaleratio=1
-        ),
+    yaxis=dict(
+        title="Hypothesis y-position [m]",
+        range=[y_scan.min(), y_scan.max()],
+        scaleanchor="x",
+        scaleratio=1
+    ),
 
         legend=dict(
             x=1.02,
@@ -974,7 +1120,205 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     )
 
 
-    return fig1, fig_combined, fig2, fig3, fig4, fig5, extra_info
+    # =====================
+    # 1.5 m SHIFT TEST
+    # =====================
+
+    # controlled geometry test
+
+    # detector exact op x-as
+    test_detector = np.array([1000.0, 0.0, 0.0])
+
+    # originele source
+    source1 = np.array([0.0, 0.0, 0.0])
+
+    # source exact 1.5 m richting detector verschoven
+    source2 = np.array([1.5, 0.0, 0.0])
+
+    # helper function
+    def get_waveform(det_pos, source_pos):
+
+        r_vec = det_pos - source_pos
+
+        arrival = np.linalg.norm(r_vec) / c_sound
+
+        R = np.linalg.norm(r_vec[:2])
+        Z = r_vec[2]
+
+        if (R < R_vals.min() or R > R_vals.max() or
+            Z < Z_vals.min() or Z > Z_vals.max()):
+
+            signal = np.zeros_like(t_vals)
+
+        else:
+            signal = interp([[R, Z]])[0]
+
+        # absolute detector time axis
+        t_abs = t_vals + arrival
+
+        return t_abs, signal
+
+
+
+
+
+    # compute both waveforms
+    t1, s1 = get_waveform(test_detector, source1)
+    t2, s2 = get_waveform(test_detector, source2)
+
+    # convert units
+    t1_ms = t1 * 1e3
+    t2_ms = t2 * 1e3
+
+    s1_mpa = s1 * 1e3
+    s2_mpa = s2 * 1e3
+
+    # amplitude schaal
+    combined_shift = np.concatenate([s1_mpa, s2_mpa])
+
+    ymax_shift = 1.1 * np.max(np.abs(combined_shift))
+
+    ymax_shift = min(ymax_shift, 20)
+    ymax_shift = max(ymax_shift, 5)
+
+    # zoom rond de puls
+    signal_mask_shift = np.abs(s1_mpa) > 0.3 * np.max(np.abs(s1_mpa))
+
+    if np.any(signal_mask_shift):
+        tmin_shift = t1_ms[signal_mask_shift].min()
+        tmax_shift = t1_ms[signal_mask_shift].max()
+    else:
+        tmin_shift = t1_ms.min()
+        tmax_shift = t1_ms.max()
+
+    # peak timing difference
+
+    peak1_idx = np.argmax(np.abs(s1_mpa))
+    peak2_idx = np.argmax(np.abs(s2_mpa))
+
+    peak1_time = t1_ms[peak1_idx]
+    peak2_time = t2_ms[peak2_idx]
+
+    delta_t = abs(peak2_time - peak1_time)
+    
+    fig_shift = go.Figure()
+    
+    # original waveform
+    fig_shift.add_trace(go.Scatter(
+        x=t1_ms,
+        y=s1_mpa,
+        mode='lines',
+        name='Original'
+    ))
+
+    # shifted waveform
+    fig_shift.add_trace(go.Scatter(
+        x=t2_ms,
+        y=s2_mpa,
+        mode='lines',
+        name='Shifted (+1.5 m)'
+    ))
+
+    # original peak
+    fig_shift.add_trace(go.Scatter(
+        x=[peak1_time, peak1_time],
+        y=[-ymax_shift, ymax_shift],
+        mode='lines',
+        line=dict(color='blue', dash='dash'),
+        name='Original peak'
+    ))
+
+    # shifted peak
+    fig_shift.add_trace(go.Scatter(
+        x=[peak2_time, peak2_time],
+        y=[-ymax_shift, ymax_shift],
+        mode='lines',
+        line=dict(color='red', dash='dash'),
+        name='Shifted peak'
+    ))
+
+    fig_shift.add_annotation(
+    x=0.5*(peak1_time + peak2_time),
+    y=0.8*ymax_shift,
+    text=f"Δt = {delta_t:.4f} ms",
+    showarrow=False,
+    font=dict(size=16)
+)
+    
+    fig_shift.update_layout(
+        title="Effect of 1.5 m source shift",
+
+        xaxis=dict(
+            range=[
+                min(peak1_time, peak2_time) - 0.2,
+                max(peak1_time, peak2_time) + 0.2
+            ],
+            title="Time [ms]"
+        ),
+
+        yaxis=dict(
+        range=[
+            -1.2*np.max(np.abs([s1_mpa, s2_mpa])),
+            1.2*np.max(np.abs([s1_mpa, s2_mpa]))
+        ],
+        title="Amplitude [mPa]"
+    ),
+
+    legend=dict(x=0.01, y=0.99)
+)
+    
+    # =====================
+    # 1D X-SCAN FIGURE
+    # =====================
+
+    fig_xscan = go.Figure()
+
+    fig_xscan.add_trace(go.Scatter(
+        x=x_scan_1d,
+        y=chi2_x,
+        mode='lines',
+        name='Global χ²'
+    ))
+
+    # true position
+    true_idx = np.argmin(np.abs(x_scan_1d - x0))
+
+    fig_xscan.add_trace(go.Scatter(
+        x=[x0],
+        y=[chi2_x[true_idx]],
+        mode='markers',
+        marker=dict(size=12, color='red'),
+        name='True x'
+    ))
+
+    # best fit
+    fig_xscan.add_trace(go.Scatter(
+        x=[best_x_1d],
+        y=[np.min(chi2_x)],
+        mode='markers',
+        marker=dict(size=12, color='cyan'),
+        name='Best fit'
+    ))
+
+    fig_xscan.update_layout(
+        title="1D χ² scan in x",
+        xaxis_title="Hypothesis x-position [m]",
+        yaxis_title="Global χ²"
+    )
+
+
+
+    return (
+    fig_xscan,
+    fig1,
+    fig_combined,
+    fig2,
+    fig3,
+    fig4,
+    fig5,
+    fig_shift,
+    extra_info
+)
 
 # =====================
 # RUN

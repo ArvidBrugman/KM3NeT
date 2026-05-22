@@ -321,14 +321,20 @@ for iy, y_hyp in enumerate(y_scan):
                 right=0
             )
 
-            # noise sigma
+            # signal-only mask
+            mask = np.abs(expected_shifted) > 0.1 * np.max(np.abs(expected_shifted))
+
+            # measured waveform
+            m = measured[mask]
+
+            # expected waveform
+            e = expected_shifted[mask]
+
             sigma = np.std(d["noise"])
 
-            # timing-sensitive chi2
             chi2 = np.sum(
-                (measured - expected_shifted)**2
-                / sigma**2
-            )
+                (m - e)**2
+            ) / sigma**2
 
             global_chi2 += chi2
 
@@ -945,15 +951,10 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     fig5.add_trace(go.Heatmap(
         x=x_scan,
         y=y_scan,
-        z=np.log10(delta_chi2_grid + 1e-6),
-
-        colorscale='Viridis',
-
-        zmin=-6,
-        zmax=2,
-
+        z=delta_chi2_grid,
+        colorscale='Inferno',
         colorbar=dict(
-            title="log10(Δχ²)",
+            title="Δχ²",
             y=0.45,
             len=0.8
         )
@@ -966,8 +967,8 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         z=delta_chi2_grid,
         contours=dict(
         start=0,
-        end=2,
-        size=0.1
+        end=120,
+        size=5
     ),
         line=dict(width=1, color='white'),
         showscale=False
@@ -1008,16 +1009,16 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         title="2D Vertex reconstruction",
 
         xaxis=dict(
-            title="Hypothesis x-position [m]",
-            range=[x_scan.min(), x_scan.max()]
-        ),
+        title="Hypothesis x-position [m]",
+        range=[x_scan.min(), x_scan.max()]
+    ),
 
-        yaxis=dict(
-            title="Hypothesis y-position [m]",
-            range=[y_scan.min(), y_scan.max()],
-            scaleanchor="x",
-            scaleratio=1
-        ),
+    yaxis=dict(
+        title="Hypothesis y-position [m]",
+        range=[y_scan.min(), y_scan.max()],
+        scaleanchor="x",
+        scaleratio=1
+    ),
 
         legend=dict(
             x=1.02,
@@ -1033,14 +1034,16 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # 1.5 m SHIFT TEST
     # =====================
 
-    # use currently selected detector
-    test_detector = d["pos"]
+    # controlled geometry test
 
-    # original source
-    source1 = np.array([x0, y0, z0])
+    # detector exact op x-as
+    test_detector = np.array([1000.0, 0.0, 0.0])
 
-    # shifted source (+1.5 m in x)
-    source2 = np.array([x0 + 1.5, y0, z0])
+    # originele source
+    source1 = np.array([0.0, 0.0, 0.0])
+
+    # source exact 1.5 m richting detector verschoven
+    source2 = np.array([1.5, 0.0, 0.0])
 
     # helper function
     def get_waveform(det_pos, source_pos):
@@ -1106,7 +1109,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     peak1_time = t1_ms[peak1_idx]
     peak2_time = t2_ms[peak2_idx]
 
-    delta_t = peak2_time - peak1_time
+    delta_t = abs(peak2_time - peak1_time)
     
     fig_shift = go.Figure()
     
@@ -1153,15 +1156,21 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 )
     
     fig_shift.update_layout(
-    title="Effect of 1.5 m source shift",
+        title="Effect of 1.5 m source shift",
 
-    xaxis=dict(
-        range=[tmin_shift - 0.2, tmax_shift + 0.2],
-        title="Time [ms]"
-    ),
+        xaxis=dict(
+            range=[
+                min(peak1_time, peak2_time) - 0.2,
+                max(peak1_time, peak2_time) + 0.2
+            ],
+            title="Time [ms]"
+        ),
 
-    yaxis=dict(
-        range=[-1.3*ymax_shift, 1.3*ymax_shift],
+        yaxis=dict(
+        range=[
+            -1.2*np.max(np.abs([s1_mpa, s2_mpa])),
+            1.2*np.max(np.abs([s1_mpa, s2_mpa]))
+        ],
         title="Amplitude [mPa]"
     ),
 
