@@ -179,6 +179,91 @@ def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals
 
     return detector_data, np.array(amplitudes), np.array(arrival_times)
 
+
+def compute_global_delta_chi2(
+    measured_event,
+    hyp_pos,
+    detector_positions,
+    interp,
+    t_vals,
+    R_vals,
+    Z_vals
+):
+
+    global_chi2_h0 = 0
+    global_chi2_h1 = 0
+
+    for i, d in enumerate(chi2_detectors):
+
+        det_pos = d["pos"]
+
+        # detector -> hypothesis vector
+        r_vec = det_pos - hyp_pos
+
+        # arrival time hypothesis
+        arrival_hyp = np.linalg.norm(r_vec) / c_sound
+
+        # cylindrical coordinates
+        R = np.linalg.norm(r_vec[:2])
+        Z = r_vec[2]
+
+        # build template
+        if (
+            R < R_vals.min() or
+            R > R_vals.max() or
+            Z < Z_vals.min() or
+            Z > Z_vals.max()
+        ):
+
+            expected_signal = np.zeros_like(t_vals)
+
+        else:
+
+            expected_signal = interp([[R, Z]])[0]
+
+        # skip empty templates
+        if np.max(np.abs(expected_signal)) < 1e-12:
+            continue
+
+        # detector measured waveform
+        measured = measured_event[i]
+
+        sigma = np.std(d["noise"])
+
+        # shift template in time
+        measured_time = d["time"]
+
+        expected_shifted = np.interp(
+            measured_time,
+            t_vals + arrival_hyp,
+            expected_signal,
+            left=0,
+            right=0
+        )
+
+        # mask around signal region
+        mask = np.abs(expected_shifted) > (
+            0.1 * np.max(np.abs(expected_shifted))
+        )
+
+        if np.sum(mask) == 0:
+            continue
+
+        m = measured[mask]
+        s = expected_shifted[mask]
+
+        # hypotheses
+        chi2_h0 = np.sum((m)**2) / sigma**2
+
+        chi2_h1 = np.sum((m - s)**2) / sigma**2
+
+        global_chi2_h0 += chi2_h0
+        global_chi2_h1 += chi2_h1
+
+    return global_chi2_h0 - global_chi2_h1
+
+
+
 # =====================
 # PRECOMPUTE
 # =====================
@@ -256,110 +341,11 @@ dt = t_vals[1] - t_vals[0]
 
 
 # =====================
-# VERTEX RECONSTRUCTION (2D)
-# =====================
-
-# local scan
-x_scan = np.linspace(x0-1, x0+1, 20)
-y_scan = np.linspace(y0-1, y0+1, 20)
-
-# storage matrix for all global chi2 values
-# rows = y positions, columns = x positions
-chi2_grid = np.zeros((len(y_scan), len(x_scan)))
-
-# loop over all hypothetical y positions
-for iy, y_hyp in enumerate(y_scan):
-
-    # loop over all hypothetical x positions
-    for ix, x_hyp in enumerate(x_scan):
-
-        # hypothetical vertex position
-        # z is kept fixed for now
-        hyp_pos = np.array([x_hyp, y_hyp, z0])
-
-        # start global chi2 at zero
-        global_chi2 = 0
-
-        # loop over all detectors to compute what every detector
-        # should measure if the neutrino was at this hypothetical position
-        for d in chi2_detectors:
-
-            # detector position
-            det_pos = d["pos"]
-
-            # vector from hypothesis position to detector
-            r_vec = det_pos - hyp_pos
-
-            # arrival time for this hypothesis
-            arrival_hyp = np.linalg.norm(r_vec) / c_sound
-
-            # cylindrical coordinates
-            R = np.linalg.norm(r_vec[:2])
-            Z = r_vec[2]
-
-            # interpolate waveform
-            if (R < R_vals.min() or R > R_vals.max() or
-                Z < Z_vals.min() or Z > Z_vals.max()):
-
-                expected_signal = np.zeros_like(t_vals)
-
-            else:
-                expected_signal = interp([[R, Z]])[0]
-
-            # detector time axis
-            measured_time = d["time"]
-
-            # measured waveform
-            measured = d["measured"]
-
-            # shifted hypothesis waveform
-            expected_shifted = np.interp(
-                measured_time,
-                t_vals + arrival_hyp,
-                expected_signal,
-                left=0,
-                right=0
-            )
-
-            # signal-only mask
-            mask = np.abs(expected_shifted) > 0.1 * np.max(np.abs(expected_shifted))
-
-            # measured waveform
-            m = measured[mask]
-
-            # expected waveform
-            e = expected_shifted[mask]
-
-            sigma = np.std(d["noise"])
-
-            chi2 = np.sum(
-                (m - e)**2
-            ) / sigma**2
-
-            global_chi2 += chi2
-
-        # store global chi2 value in the 2D chi2 grid
-        chi2_grid[iy, ix] = global_chi2
-
-# search for the minimum chi2 position in the 2D grid
-best_idx = np.unravel_index(
-    np.argmin(chi2_grid),
-    chi2_grid.shape
-)
-
-delta_chi2_grid = chi2_grid - np.min(chi2_grid)
-
-# best-fit reconstructed coordinates
-best_y = y_scan[best_idx[0]]
-best_x = x_scan[best_idx[1]]
-
-
-# =====================
 # 1D X-SCAN
 # =====================
 
 # scan range in x
-x_scan_1d = np.linspace(x0 - 10, x0 + 10, 200)
+x_scan_1d = np.linspace(x0 - 2, x0 + 2, 80)
 
 # store chi2 values
 chi2_x = []
@@ -441,6 +427,104 @@ delta_chi2_x = chi2_x - np.min(chi2_x)
 # best fit
 best_x_1d = x_scan_1d[np.argmin(delta_chi2_x)]
 
+# reconstruction error in cm
+x_error_cm = np.abs(best_x_1d - x0) * 100
+
+
+# fixed hypothesis position
+hyp_pos = np.array([x0, y0, z0])
+
+
+
+
+
+# =====================
+# NOISE-ONLY DELTA CHI2 DISTRIBUTION
+# =====================
+
+n_noise_events = 300
+
+noise_delta_chi2_distribution = []
+
+for evt in range(n_noise_events):
+
+    # build one pure noise event
+    measured_event = []
+
+    for d in chi2_detectors:
+
+        # random noise realization
+        i_rand = np.random.randint(0, noise_data.shape[0])
+        j_rand = np.random.randint(0, noise_data.shape[1])
+
+        noise = noise_data[i_rand, j_rand, :]
+        noise = noise * (0.01 / np.std(noise))
+
+        measured_event.append(noise)
+
+    # compare THIS noise event
+    # with THIS hypothesis template
+    delta = compute_global_delta_chi2(
+        measured_event,
+        hyp_pos,
+        detector_positions,
+        interp,
+        t_vals,
+        R_vals,
+        Z_vals
+    )
+
+    noise_delta_chi2_distribution.append(delta)
+
+noise_delta_chi2_distribution = np.array(
+    noise_delta_chi2_distribution
+)
+
+# =====================
+# SIGNAL+NOISE DELTA CHI2 DISTRIBUTION
+# =====================
+
+n_signal_events = 300
+
+signal_delta_chi2_distribution = []
+
+for evt in range(n_signal_events):
+
+    measured_event = []
+
+    for d in chi2_detectors:
+
+        # TRUE signal
+        signal_template = d["signal"]
+
+        # random noise
+        i_rand = np.random.randint(0, noise_data.shape[0])
+        j_rand = np.random.randint(0, noise_data.shape[1])
+
+        noise = noise_data[i_rand, j_rand, :]
+        noise = noise * (0.01 / np.std(noise))
+
+        # signal + noise
+        measured = signal_template + noise
+
+        measured_event.append(measured)
+
+    # compare with SAME hypothesis template
+    delta = compute_global_delta_chi2(
+        measured_event,
+        hyp_pos,
+        detector_positions,
+        interp,
+        t_vals,
+        R_vals,
+        Z_vals
+    )
+
+    signal_delta_chi2_distribution.append(delta)
+
+signal_delta_chi2_distribution = np.array(
+    signal_delta_chi2_distribution
+)
 
 # =====================
 # SLIDER
@@ -498,13 +582,14 @@ app.layout = html.Div([
     # spacing between 3D plot and the plots below
     html.Div([
         dcc.Graph(id="xscan-plot"),
+        dcc.Graph(id="delta-xscan-plot"),
+        dcc.Graph(id="noise-dchi2-distribution"),
+        dcc.Graph(id="signal-dchi2-distribution"),
         dcc.Graph(id="waveform"),
         dcc.Graph(id="combined-waveform"),
         dcc.Graph(id="noise-hist"),
         dcc.Graph(id="stack-plot"),
-        dcc.Graph(id="delta-chi2-hist"),
-        dcc.Graph(id="vertex-reco"),
-        dcc.Graph(id="shift-test")        
+        dcc.Graph(id="delta-chi2-hist"),      
     ], style={'marginTop': '20px'})
 
 ])
@@ -599,13 +684,14 @@ def update_3d(t_current_ms, clickData):
 # this callback updates the info panel and the 3 plots (waveform, noise histogram and stack plot) based on the selected detector in the 3D plot and the current time from the slider
 @app.callback(
     [Output("xscan-plot", "figure"),
+    Output("delta-xscan-plot", "figure"),
+    Output("noise-dchi2-distribution", "figure"),
+    Output("signal-dchi2-distribution", "figure"),
     Output("waveform", "figure"),
      Output("combined-waveform", "figure"),
      Output("noise-hist", "figure"),
      Output("stack-plot", "figure"),
      Output("delta-chi2-hist", "figure"),
-     Output("vertex-reco", "figure"),
-     Output("shift-test", "figure"),
      Output("info-panel", "children")],
 
     [Input("3d-plot", "clickData"),
@@ -643,7 +729,19 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
 
         html.P(f"Reduced χ² (H1) = {reduced_chi2_h1:.3f}"),
 
-        html.P(f"Degrees of freedom = {ndof}")]
+        html.P(f"Degrees of freedom = {ndof}"),
+
+        html.Hr(),
+
+        html.H4("1D X reconstruction"),
+
+        html.P(f"True x = {x0:.3f} m"),
+
+        html.P(f"Best-fit x = {best_x_1d:.3f} m"),
+
+        html.P(f"Reconstruction error = {x_error_cm:.2f} cm")
+
+        ]
     
     # if no detector is selected, we return empty plots and just the base info
     selected_idx = None
@@ -667,6 +765,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     go.Figure(),
     go.Figure(),
     go.Figure(),
+    go.Figure(),
     base_info
 )
 
@@ -677,32 +776,6 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     chi2_h1 = d["chi2_h1"]
     dchi2 = d["delta_chi2"]
     mask = d["mask"]
-
-    # =====================
-    # BEST-FIT TEMPLATE
-    # =====================
-
-    # reconstructed best-fit source position
-    best_fit_pos = np.array([best_x, best_y, z0])
-
-    # vector from reconstructed vertex to detector
-    r_vec_fit = d["pos"] - best_fit_pos
-
-    # cylindrical coordinates
-    R_fit = np.linalg.norm(r_vec_fit[:2])
-    Z_fit = r_vec_fit[2]
-
-    # compute expected waveform from best-fit position
-    if (R_fit < R_vals.min() or R_fit > R_vals.max() or
-        Z_fit < Z_vals.min() or Z_fit > Z_vals.max()):
-
-        best_fit_signal = np.zeros_like(t_vals)
-
-    else:
-        best_fit_signal = interp([[R_fit, Z_fit]])[0]
-
-    # convert to mPa
-    best_fit_signal *= 1e3
 
     # we convert the time to ms and the signal and noise to mPa for better visualization in the plots
     t = d["time"] * 1e3
@@ -779,19 +852,6 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         name='Arrival'
     ))
 
-    # best fit
-    fig1.add_trace(go.Scatter(
-        x=t,
-        y=best_fit_signal,
-        mode='lines',
-        name='Best-fit template',
-        line=dict(
-            color='orange',
-            width=3,
-            dash='dash'
-        )
-    ))
-
     # peak line, dashed green
     fig1.add_trace(go.Scatter(
         x=[peak_time, peak_time], y=[-1.3*ymax, 1.3*ymax],
@@ -827,7 +887,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         legend=dict(x=0.01, y=0.99)
     )
 
-        # =====================
+    # =====================
     # COMBINED SIGNAL + NOISE
     # =====================
 
@@ -989,20 +1049,9 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         html.P(f"Peak time = {peak_time:.2f} ms"),
         html.P(f"Chi² (H0) = {chi2_h0:.1f}"),
         html.P(f"Chi² (H1) = {chi2_h1:.1f}"),
-        html.P(f"ΔChi² = {dchi2:.1f}"), 
+        html.P(f"ΔChi² = {dchi2:.1f}")]
 
-        html.Hr(),
-        html.H4("Vertex reconstruction"),
-        html.P(f"True x = {x0:.1f} m"),
-        html.P(f"Best-fit x = {best_x:.1f} m"),
-        html.P(f"True y = {y0:.1f} m"),
-        html.P(f"Best-fit y = {best_y:.1f} m"),
 
-        html.P(
-            f"Reconstruction error = "
-            f"{100*np.sqrt((best_x-x0)**2 + (best_y-y0)**2):.4f} cm"
-        ),
-    ]
 
     # verzamel alle delta chi2 waarden
     all_dchi2 = [d["delta_chi2"] for d in detector_data]
@@ -1034,238 +1083,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         xaxis_title="Detector index",
         yaxis_title="ΔChi²"
     )
-
-
-    fig5 = go.Figure()
-
-    fig5.add_trace(go.Heatmap(
-        x=x_scan,
-        y=y_scan,
-        z=delta_chi2_grid,
-        colorscale='Inferno',
-        colorbar=dict(
-            title="Δχ²",
-            y=0.45,
-            len=0.8
-        )
-    ))
-
-
-    fig5.add_trace(go.Contour(
-        x=x_scan,
-        y=y_scan,
-        z=delta_chi2_grid,
-        contours=dict(
-        start=0,
-        end=120,
-        size=5
-    ),
-        line=dict(width=1, color='white'),
-        showscale=False
-    ))
-
-
-    # chi2 difference between true position and best fit
-    true_delta_chi2 = delta_chi2_grid[
-        np.argmin(np.abs(y_scan - y0)),
-        np.argmin(np.abs(x_scan - x0))
-    ]
-
-    # true neutrino position
-    fig5.add_trace(go.Scatter(
-        x=[x0],
-        y=[y0],
-        mode='markers+text',
-        marker=dict(size=12, color='red'),
-        text=[f"Δχ² = {true_delta_chi2:.1f}"],
-        textposition="top center",
-        name='True position'
-    ))
-
-    # reconstructed best-fit position
-    fig5.add_trace(go.Scatter(
-        x=[best_x],
-        y=[best_y],
-        mode='markers',
-        marker=dict(
-            size=12,
-            color='cyan',
-            line=dict(color='black', width=1)
-        ),
-        name='Best fit'
-    ))
-
-    fig5.update_layout(
-        title="2D Vertex reconstruction",
-
-        xaxis=dict(
-        title="Hypothesis x-position [m]",
-        range=[x_scan.min(), x_scan.max()]
-    ),
-
-    yaxis=dict(
-        title="Hypothesis y-position [m]",
-        range=[y_scan.min(), y_scan.max()],
-        scaleanchor="x",
-        scaleratio=1
-    ),
-
-        legend=dict(
-            x=1.02,
-            y=1.0
-        ),
-
-        width=900,
-        height=900
-    )
-
-
-    # =====================
-    # 1.5 m SHIFT TEST
-    # =====================
-
-    # controlled geometry test
-
-    # detector exact op x-as
-    test_detector = np.array([1000.0, 0.0, 0.0])
-
-    # originele source
-    source1 = np.array([0.0, 0.0, 0.0])
-
-    # source exact 1.5 m richting detector verschoven
-    source2 = np.array([1.5, 0.0, 0.0])
-
-    # helper function
-    def get_waveform(det_pos, source_pos):
-
-        r_vec = det_pos - source_pos
-
-        arrival = np.linalg.norm(r_vec) / c_sound
-
-        R = np.linalg.norm(r_vec[:2])
-        Z = r_vec[2]
-
-        if (R < R_vals.min() or R > R_vals.max() or
-            Z < Z_vals.min() or Z > Z_vals.max()):
-
-            signal = np.zeros_like(t_vals)
-
-        else:
-            signal = interp([[R, Z]])[0]
-
-        # absolute detector time axis
-        t_abs = t_vals + arrival
-
-        return t_abs, signal
-
-
-
-
-
-    # compute both waveforms
-    t1, s1 = get_waveform(test_detector, source1)
-    t2, s2 = get_waveform(test_detector, source2)
-
-    # convert units
-    t1_ms = t1 * 1e3
-    t2_ms = t2 * 1e3
-
-    s1_mpa = s1 * 1e3
-    s2_mpa = s2 * 1e3
-
-    # amplitude schaal
-    combined_shift = np.concatenate([s1_mpa, s2_mpa])
-
-    ymax_shift = 1.1 * np.max(np.abs(combined_shift))
-
-    ymax_shift = min(ymax_shift, 20)
-    ymax_shift = max(ymax_shift, 5)
-
-    # zoom rond de puls
-    signal_mask_shift = np.abs(s1_mpa) > 0.3 * np.max(np.abs(s1_mpa))
-
-    if np.any(signal_mask_shift):
-        tmin_shift = t1_ms[signal_mask_shift].min()
-        tmax_shift = t1_ms[signal_mask_shift].max()
-    else:
-        tmin_shift = t1_ms.min()
-        tmax_shift = t1_ms.max()
-
-    # peak timing difference
-
-    peak1_idx = np.argmax(np.abs(s1_mpa))
-    peak2_idx = np.argmax(np.abs(s2_mpa))
-
-    peak1_time = t1_ms[peak1_idx]
-    peak2_time = t2_ms[peak2_idx]
-
-    delta_t = abs(peak2_time - peak1_time)
-    
-    fig_shift = go.Figure()
-    
-    # original waveform
-    fig_shift.add_trace(go.Scatter(
-        x=t1_ms,
-        y=s1_mpa,
-        mode='lines',
-        name='Original'
-    ))
-
-    # shifted waveform
-    fig_shift.add_trace(go.Scatter(
-        x=t2_ms,
-        y=s2_mpa,
-        mode='lines',
-        name='Shifted (+1.5 m)'
-    ))
-
-    # original peak
-    fig_shift.add_trace(go.Scatter(
-        x=[peak1_time, peak1_time],
-        y=[-ymax_shift, ymax_shift],
-        mode='lines',
-        line=dict(color='blue', dash='dash'),
-        name='Original peak'
-    ))
-
-    # shifted peak
-    fig_shift.add_trace(go.Scatter(
-        x=[peak2_time, peak2_time],
-        y=[-ymax_shift, ymax_shift],
-        mode='lines',
-        line=dict(color='red', dash='dash'),
-        name='Shifted peak'
-    ))
-
-    fig_shift.add_annotation(
-    x=0.5*(peak1_time + peak2_time),
-    y=0.8*ymax_shift,
-    text=f"Δt = {delta_t:.4f} ms",
-    showarrow=False,
-    font=dict(size=16)
-)
-    
-    fig_shift.update_layout(
-        title="Effect of 1.5 m source shift",
-
-        xaxis=dict(
-            range=[
-                min(peak1_time, peak2_time) - 0.2,
-                max(peak1_time, peak2_time) + 0.2
-            ],
-            title="Time [ms]"
-        ),
-
-        yaxis=dict(
-        range=[
-            -1.2*np.max(np.abs([s1_mpa, s2_mpa])),
-            1.2*np.max(np.abs([s1_mpa, s2_mpa]))
-        ],
-        title="Amplitude [mPa]"
-    ),
-
-    legend=dict(x=0.01, y=0.99)
-)
+   
     
     # =====================
     # 1D X-SCAN FIGURE
@@ -1306,17 +1124,169 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         yaxis_title="Global χ²"
     )
 
+    # =====================
+    # DELTA CHI2 X-SCAN
+    # =====================
+
+    fig_delta_xscan = go.Figure()
+
+    fig_delta_xscan.add_trace(go.Scatter(
+        x=x_scan_1d,
+        y=delta_chi2_x,
+        mode='lines',
+        name='Δχ²'
+    ))
+
+    # true position
+    fig_delta_xscan.add_trace(go.Scatter(
+        x=[x0],
+        y=[delta_chi2_x[true_idx]],
+        mode='markers',
+        marker=dict(size=12, color='red'),
+        name='True x'
+    ))
+
+    # best fit
+    fig_delta_xscan.add_trace(go.Scatter(
+        x=[best_x_1d],
+        y=[0],
+        mode='markers',
+        marker=dict(size=12, color='cyan'),
+        name='Best fit'
+    ))
+
+    fig_delta_xscan.update_layout(
+        title="1D Δχ² scan in x",
+        xaxis_title="Hypothesis x-position [m]",
+        yaxis_title="Δχ²"
+    )
+    
+
+
+    # =====================
+    # NOISE Δχ² DISTRIBUTION
+    # =====================
+
+    fig_noise_dchi2 = go.Figure()
+
+    # histogram only for density estimation
+    hist_noise, bins_noise = np.histogram(
+        noise_delta_chi2_distribution,
+        bins=40,
+        density=True
+    )
+
+    # bin centers
+    x_noise = 0.5 * (bins_noise[1:] + bins_noise[:-1])
+
+    # scatter points
+    fig_noise_dchi2.add_trace(go.Scatter(
+        x=x_noise,
+        y=hist_noise,
+        mode='markers',
+        marker=dict(size=7),
+        name='Noise-only'
+    ))
+
+    # Gaussian fit
+    mu_noise, sigma_noise = norm.fit(
+        noise_delta_chi2_distribution
+    )
+
+    xfit_noise = np.linspace(
+        noise_delta_chi2_distribution.min(),
+        noise_delta_chi2_distribution.max(),
+        500
+    )
+
+    yfit_noise = norm.pdf(
+        xfit_noise,
+        mu_noise,
+        sigma_noise
+    )
+
+    fig_noise_dchi2.add_trace(go.Scatter(
+        x=xfit_noise,
+        y=yfit_noise,
+        mode='lines',
+        line=dict(width=3),
+        name='Gaussian fit'
+    ))
+
+    fig_noise_dchi2.update_layout(
+        title=f"Noise-only Δχ² distribution (μ={mu_noise:.1f}, σ={sigma_noise:.1f})",
+        xaxis_title="Δχ²",
+        yaxis_title="Probability density"
+    )
+
+
+
+   # =====================
+    # SIGNAL+NOISE Δχ² DISTRIBUTION
+    # =====================
+
+    fig_signal_dchi2 = go.Figure()
+
+    hist_signal, bins_signal = np.histogram(
+        signal_delta_chi2_distribution,
+        bins=40,
+        density=True
+    )
+
+    x_signal = 0.5 * (bins_signal[1:] + bins_signal[:-1])
+
+    # scatter points
+    fig_signal_dchi2.add_trace(go.Scatter(
+        x=x_signal,
+        y=hist_signal,
+        mode='markers',
+        marker=dict(size=7),
+        name='Signal+noise'
+    ))
+
+    # Gaussian fit
+    mu_signal, sigma_signal = norm.fit(
+        signal_delta_chi2_distribution
+    )
+
+    xfit_signal = np.linspace(
+        signal_delta_chi2_distribution.min(),
+        signal_delta_chi2_distribution.max(),
+        500
+    )
+
+    yfit_signal = norm.pdf(
+        xfit_signal,
+        mu_signal,
+        sigma_signal
+    )
+
+    fig_signal_dchi2.add_trace(go.Scatter(
+        x=xfit_signal,
+        y=yfit_signal,
+        mode='lines',
+        line=dict(width=3),
+        name='Gaussian fit'
+    ))
+
+    fig_signal_dchi2.update_layout(
+        title=f"Signal+noise Δχ² distribution (μ={mu_signal:.1f}, σ={sigma_signal:.1f})",
+        xaxis_title="Δχ²",
+        yaxis_title="Probability density"
+    )
+
 
 
     return (
     fig_xscan,
+    fig_delta_xscan,
+    fig_noise_dchi2,
+    fig_signal_dchi2,
     fig1,
     fig_combined,
     fig2,
     fig3,
     fig4,
-    fig5,
-    fig_shift,
     extra_info
 )
 
