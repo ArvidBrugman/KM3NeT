@@ -135,7 +135,13 @@ def compute_all(detector_positions, source_pos, interpolator, noise_data, t_vals
         i_rand = np.random.randint(0, noise_data.shape[0])
         j_rand = np.random.randint(0, noise_data.shape[1])
         noise = noise_data[i_rand, j_rand, :]
-        noise = noise * (0.01 / np.std(noise))
+
+        noise_std = np.std(noise)
+
+        if not np.isfinite(noise_std) or noise_std < 1e-12:
+            continue
+
+        noise = noise * (0.01 / noise_std)
 
         if (R < R_vals.min() or R > R_vals.max() or
             Z < Z_vals.min() or Z > Z_vals.max()):
@@ -229,6 +235,9 @@ def compute_global_delta_chi2(
         measured = measured_event[i]
 
         sigma = np.std(d["noise"])
+
+        if not np.isfinite(sigma) or sigma < 1e-12:
+            continue
 
         # shift template in time
         measured_time = d["time"]
@@ -431,22 +440,24 @@ best_x_1d = x_scan_1d[np.argmin(delta_chi2_x)]
 x_error_cm = np.abs(best_x_1d - x0) * 100
 
 
+
+
+
+
+
 # fixed hypothesis position
 hyp_pos = np.array([x0, y0, z0])
 
-
-
+n_pseudo_experiments = 300
 
 
 # =====================
 # NOISE-ONLY DELTA CHI2 DISTRIBUTION
 # =====================
 
-n_noise_events = 300
-
 noise_delta_chi2_distribution = []
 
-for evt in range(n_noise_events):
+for evt in range(n_pseudo_experiments):
 
     # build one pure noise event
     measured_event = []
@@ -458,7 +469,13 @@ for evt in range(n_noise_events):
         j_rand = np.random.randint(0, noise_data.shape[1])
 
         noise = noise_data[i_rand, j_rand, :]
-        noise = noise * (0.01 / np.std(noise))
+
+        noise_std = np.std(noise)
+
+        if not np.isfinite(noise_std) or noise_std < 1e-12:
+            continue
+
+        noise = noise * (0.01 / noise_std)
 
         measured_event.append(noise)
 
@@ -484,11 +501,9 @@ noise_delta_chi2_distribution = np.array(
 # SIGNAL+NOISE DELTA CHI2 DISTRIBUTION
 # =====================
 
-n_signal_events = 300
-
 signal_delta_chi2_distribution = []
 
-for evt in range(n_signal_events):
+for evt in range(n_pseudo_experiments):
 
     measured_event = []
 
@@ -502,7 +517,13 @@ for evt in range(n_signal_events):
         j_rand = np.random.randint(0, noise_data.shape[1])
 
         noise = noise_data[i_rand, j_rand, :]
-        noise = noise * (0.01 / np.std(noise))
+
+        noise_std = np.std(noise)
+
+        if not np.isfinite(noise_std) or noise_std < 1e-12:
+            continue
+
+        noise = noise * (0.01 / noise_std)
 
         # signal + noise
         measured = signal_template + noise
@@ -585,6 +606,7 @@ app.layout = html.Div([
         dcc.Graph(id="delta-xscan-plot"),
         dcc.Graph(id="noise-dchi2-distribution"),
         dcc.Graph(id="signal-dchi2-distribution"),
+        dcc.Graph(id="combined-dchi2-distribution"),
         dcc.Graph(id="waveform"),
         dcc.Graph(id="combined-waveform"),
         dcc.Graph(id="noise-hist"),
@@ -687,6 +709,7 @@ def update_3d(t_current_ms, clickData):
     Output("delta-xscan-plot", "figure"),
     Output("noise-dchi2-distribution", "figure"),
     Output("signal-dchi2-distribution", "figure"),
+    Output("combined-dchi2-distribution", "figure"),
     Output("waveform", "figure"),
      Output("combined-waveform", "figure"),
      Output("noise-hist", "figure"),
@@ -757,6 +780,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # niets geselecteerd
     if selected_idx is None:
         return (
+    go.Figure(),
     go.Figure(),
     go.Figure(),
     go.Figure(),
@@ -1275,6 +1299,57 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         yaxis_title="Probability density"
     )
 
+    # =====================
+    # COMBINED Δχ² DISTRIBUTIONS
+    # =====================
+
+    fig_combined_dchi2 = go.Figure()
+
+    # -----------------
+    # NOISE
+    # -----------------
+
+    fig_combined_dchi2.add_trace(go.Scatter(
+        x=x_noise,
+        y=hist_noise,
+        mode='markers',
+        marker=dict(size=7),
+        name='Noise-only'
+    ))
+
+    fig_combined_dchi2.add_trace(go.Scatter(
+        x=xfit_noise,
+        y=yfit_noise,
+        mode='lines',
+        line=dict(width=3),
+        name='Noise Gaussian fit'
+    ))
+
+    # -----------------
+    # SIGNAL
+    # -----------------
+
+    fig_combined_dchi2.add_trace(go.Scatter(
+        x=x_signal,
+        y=hist_signal,
+        mode='markers',
+        marker=dict(size=7),
+        name='Signal+noise'
+    ))
+
+    fig_combined_dchi2.add_trace(go.Scatter(
+        x=xfit_signal,
+        y=yfit_signal,
+        mode='lines',
+        line=dict(width=3),
+        name='Signal Gaussian fit'
+    ))
+
+    fig_combined_dchi2.update_layout(
+        title="Combined Δχ² distributions",
+        xaxis_title="Δχ²",
+        yaxis_title="Probability density"
+    )
 
 
     return (
@@ -1282,6 +1357,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     fig_delta_xscan,
     fig_noise_dchi2,
     fig_signal_dchi2,
+    fig_combined_dchi2,
     fig1,
     fig_combined,
     fig2,
