@@ -2,7 +2,7 @@ import numpy as np
 from ACpulse import ACpulse
 import multiprocessing
 
-E = 1e20
+E = 1e21
 Ncores = 10
 
 print("Starting generation")
@@ -59,10 +59,10 @@ if __name__ == "__main__":
             f.write(" ".join(map(str, signal[:20])) + "\n\n")  # eerste 20 samples
 
     # save to .npz for later use
-    np.savez("pulses.npz",
+    np.savez("pulses21.npz",
              R=np.array(R_vals),
              Z=np.array(Z_vals),
              t=time_axis,
              signal=signal_array)
 
-    print("Saved to pulses.npz")
+    print("Saved to pulses21.npz")
