@@ -90,7 +90,7 @@ def build_detector_positions():
 # =====================
 def load_pulse_interpolator():
     # load precumputed pulses on a grid of (R,Z) values, and create an interpolator function that we can call later for each detector position
-    data = np.load("pulses.npz")
+    data = np.load("pulses20.npz")
 
     return RegularGridInterpolator(
         (data["R"], data["Z"]),

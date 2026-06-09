@@ -31,7 +31,7 @@ phi_nu = 0      # azimuth
 c_sound = 1500
 
 # stacking selection (pancake), only detectors close to the source in z direction are used
-z_threshold = 200
+z_threshold = 1000
 
 def get_direction_vector(theta, phi):
 
@@ -90,7 +90,7 @@ def build_detector_positions():
 # =====================
 def load_pulse_interpolator():
     # load precumputed pulses on a grid of (R,Z) values, and create an interpolator function that we can call later for each detector position
-    data = np.load("pulses.npz")
+    data = np.load("pulses20.npz")
 
     return RegularGridInterpolator(
         (data["R"], data["Z"]),
@@ -300,6 +300,144 @@ def compute_global_delta_chi2(
 
     return global_chi2_h0 - global_chi2_h1
 
+def compute_global_delta_chi2_theta(
+    measured_event,
+    hyp_pos,
+    nu_dir_hyp,
+    detector_positions,
+    interp,
+    t_vals,
+    R_vals,
+    Z_vals
+):
+
+    global_chi2_h0 = 0
+    global_chi2_h1 = 0
+
+    n_used = 0
+
+    for i, d in enumerate(chi2_detectors):
+
+        det_pos = d["pos"]
+
+        # detector -> source vector
+        r_vec = det_pos - hyp_pos
+
+        # arrival time hypothesis
+        arrival_hyp = np.linalg.norm(
+            r_vec
+        ) / c_sound
+
+        # =====================
+        # THETA HYPOTHESIS
+        # =====================
+
+        Z = np.dot(
+            r_vec,
+            nu_dir_hyp
+        )
+
+        perp_vec = (
+            r_vec
+            - Z * nu_dir_hyp
+        )
+
+        R = np.linalg.norm(
+            perp_vec
+        )
+
+        # =====================
+        # TEMPLATE
+        # =====================
+
+        if (
+            R < R_vals.min()
+            or R > R_vals.max()
+            or Z < Z_vals.min()
+            or Z > Z_vals.max()
+        ):
+
+            expected_signal = np.zeros_like(
+                t_vals
+            )
+
+        else:
+
+            expected_signal = interp(
+                [[R, Z]]
+            )[0]
+
+        # skip empty templates
+        if np.max(
+            np.abs(expected_signal)
+        ) < 1e-12:
+
+            continue
+
+        # measured waveform
+        if isinstance(
+            measured_event[i],
+            dict
+        ):
+
+            measured = measured_event[i][
+                "waveform"
+            ]
+
+        else:
+
+            measured = measured_event[i]
+
+        sigma = np.std(
+            d["noise"]
+        )
+
+        if (
+            not np.isfinite(sigma)
+            or sigma < 1e-12
+        ):
+
+            continue
+
+        expected_shifted = np.interp(
+            d["time"],
+            t_vals + arrival_hyp,
+            expected_signal,
+            left=0,
+            right=0
+        )
+
+        mask = (
+            np.abs(t_vals)
+            < 0.0002
+        )
+
+        m = measured[mask]
+        s = expected_shifted[mask]
+
+        chi2_h0 = (
+            np.sum(m**2)
+            / sigma**2
+        )
+
+        chi2_h1 = (
+            np.sum((m - s)**2)
+            / sigma**2
+        )
+
+        global_chi2_h0 += chi2_h0
+        global_chi2_h1 += chi2_h1
+
+        n_used += 1
+
+    if n_used == 0:
+        return np.nan
+
+    return (
+        global_chi2_h0
+        - global_chi2_h1
+    )
+
 def reconstruct_x(measured_event):
 
     chi2_x = []
@@ -382,7 +520,119 @@ def reconstruct_y(measured_event):
 
     return best_y
 
+def reconstruct_z(measured_event):
 
+    chi2_z = []
+
+    z_scan = np.linspace(
+        z0 - 0.05,
+        z0 + 0.05,
+        200
+    )
+
+    for z_hyp in z_scan:
+
+        hyp_pos = np.array([
+            x0,
+            y0,
+            z_hyp
+        ])
+
+        delta = compute_global_delta_chi2(
+            measured_event,
+            hyp_pos,
+            detector_positions,
+            interp,
+            t_vals,
+            R_vals,
+            Z_vals
+        )
+
+        chi2_z.append(-delta)
+
+    chi2_z = np.array(chi2_z)
+
+    delta_chi2_z = (
+        chi2_z -
+        np.min(chi2_z)
+    )
+
+    best_z = z_scan[
+        np.argmin(delta_chi2_z)
+    ]
+
+    return best_z
+
+def reconstruct_theta(measured_event):
+
+    chi2_theta = []
+
+    theta_scan = np.deg2rad(
+        np.linspace(
+            0,
+            5,
+            200
+        )
+    )
+
+    for theta_hyp in theta_scan:
+
+        nu_dir_hyp = get_direction_vector(
+            theta_hyp,
+            phi_nu
+        )
+
+        delta = compute_global_delta_chi2_theta(
+            measured_event,
+            source_pos,
+            nu_dir_hyp,
+            detector_positions,
+            interp,
+            t_vals,
+            R_vals,
+            Z_vals
+        )
+
+        chi2_theta.append(-delta)
+
+    chi2_theta = np.array(chi2_theta)
+
+    delta_chi2_theta = (
+        chi2_theta -
+        np.min(chi2_theta)
+    )
+
+    best_theta = theta_scan[
+        np.argmin(delta_chi2_theta)
+    ]
+
+    return best_theta
+
+def find_crossings(scan, delta_chi2, level):
+
+    imin = np.argmin(delta_chi2)
+
+    # linker tak
+    left_chi2 = delta_chi2[:imin+1]
+    left_scan = scan[:imin+1]
+
+    left = np.interp(
+        level,
+        left_chi2[::-1],
+        left_scan[::-1]
+    )
+
+    # rechter tak
+    right_chi2 = delta_chi2[imin:]
+    right_scan = scan[imin:]
+
+    right = np.interp(
+        level,
+        right_chi2,
+        right_scan
+    )
+
+    return left, right
 
 # =====================
 # PRECOMPUTE
@@ -551,44 +801,28 @@ best_x_fine = x_scan_fine[
 
 x_error_cm = abs(best_x_fine - x0) * 100
 
-indices_1sigma_x = np.where(
-    delta_chi2_x_fine <= 1
-)[0]
+x_low_1sigma, x_high_1sigma = find_crossings(
+    x_scan_fine,
+    delta_chi2_x_fine,
+    1
+)
 
+x_low_2sigma, x_high_2sigma = find_crossings(
+    x_scan_fine,
+    delta_chi2_x_fine,
+    4
+)
 
-if len(indices_1sigma_x) > 0:
+x_low_3sigma, x_high_3sigma = find_crossings(
+    x_scan_fine,
+    delta_chi2_x_fine,
+    9
+)
 
-    x_low_1sigma = x_scan_fine[
-        indices_1sigma_x[0]
-    ]
-
-    x_high_1sigma = x_scan_fine[
-        indices_1sigma_x[-1]
-    ]
-
-    sigma_x = (
-        x_high_1sigma -
-        x_low_1sigma
-    ) / 2
-
-    x_low_2sigma  = best_x_fine - 2*sigma_x
-    x_high_2sigma = best_x_fine + 2*sigma_x
-
-    x_low_3sigma  = best_x_fine - 3*sigma_x
-    x_high_3sigma = best_x_fine + 3*sigma_x
-
-else:
-
-    sigma_x = np.nan
-
-    x_low_1sigma = np.nan
-    x_high_1sigma = np.nan
-
-    x_low_2sigma = np.nan
-    x_high_2sigma = np.nan
-
-    x_low_3sigma = np.nan
-    x_high_3sigma = np.nan
+sigma_x = (
+    x_high_1sigma -
+    x_low_1sigma
+) / 2
 
 
 
@@ -672,44 +906,28 @@ best_y_fine = y_scan_fine[
 
 y_error_cm = abs(best_y_fine - y0) * 100
 
-indices_1sigma_y = np.where(
-    delta_chi2_y_fine <= 1
-)[0]
+y_low_1sigma, y_high_1sigma = find_crossings(
+    y_scan_fine,
+    delta_chi2_y_fine,
+    1
+)
 
-if len(indices_1sigma_y) > 0:
+y_low_2sigma, y_high_2sigma = find_crossings(
+    y_scan_fine,
+    delta_chi2_y_fine,
+    4
+)
 
-    y_low_1sigma = y_scan_fine[
-        indices_1sigma_y[0]
-    ]
+y_low_3sigma, y_high_3sigma = find_crossings(
+    y_scan_fine,
+    delta_chi2_y_fine,
+    9
+)
 
-    y_high_1sigma = y_scan_fine[
-        indices_1sigma_y[-1]
-    ]
-
-    sigma_y = (
-        y_high_1sigma -
-        y_low_1sigma
-    ) / 2
-
-    y_low_2sigma  = best_y_fine - 2*sigma_y
-    y_high_2sigma = best_y_fine + 2*sigma_y
-
-    y_low_3sigma  = best_y_fine - 3*sigma_y
-    y_high_3sigma = best_y_fine + 3*sigma_y
-
-else:
-
-    sigma_y = np.nan
-    y_low_1sigma = np.nan
-    y_high_1sigma = np.nan
-
-    y_low_2sigma = np.nan
-    y_high_2sigma = np.nan
-
-    y_low_3sigma = np.nan
-    y_high_3sigma = np.nan
-
-
+sigma_y = (
+    y_high_1sigma -
+    y_low_1sigma
+) / 2
 
 
 z_scan_1d = np.linspace(z0 - 2, z0 + 2, 80)
@@ -742,6 +960,77 @@ best_z_1d = z_scan_1d[np.argmin(delta_chi2_z)]
 
 z_error_cm = abs(best_z_1d - z0) * 100
 
+# =====================
+# FINE Z SCAN
+# =====================
+
+chi2_z_fine = []
+
+z_scan_fine = np.linspace(
+    best_z_1d - 0.05,
+    best_z_1d + 0.05,
+    200
+)
+
+for z_hyp in z_scan_fine:
+
+    hyp_pos = np.array([
+        x0,
+        y0,
+        z_hyp
+    ])
+
+    delta = compute_global_delta_chi2(
+        measured_event,
+        hyp_pos,
+        detector_positions,
+        interp,
+        t_vals,
+        R_vals,
+        Z_vals
+    )
+
+    chi2_z_fine.append(-delta)
+
+chi2_z_fine = np.array(chi2_z_fine)
+
+delta_chi2_z_fine = (
+    chi2_z_fine -
+    np.min(chi2_z_fine)
+)
+
+best_z_fine = z_scan_fine[
+    np.argmin(delta_chi2_z_fine)
+]
+
+z_error_cm = abs(
+    best_z_fine - z0
+) * 100
+
+z_low_1sigma, z_high_1sigma = find_crossings(
+    z_scan_fine,
+    delta_chi2_z_fine,
+    1
+)
+
+z_low_2sigma, z_high_2sigma = find_crossings(
+    z_scan_fine,
+    delta_chi2_z_fine,
+    4
+)
+
+z_low_3sigma, z_high_3sigma = find_crossings(
+    z_scan_fine,
+    delta_chi2_z_fine,
+    9
+)
+
+sigma_z = (
+    z_high_1sigma -
+    z_low_1sigma
+) / 2
+
+
 # we convert the amplitudes to mPa for better visualization in the app
 amps = amplitudes * 1000
 # size of the time step (we assume uniform)
@@ -749,12 +1038,146 @@ dt = t_vals[1] - t_vals[0]
 
 
 # =====================
-# X MONTE CARLO
+# THETA SCAN TEST
+# =====================
+
+theta_scan_deg = np.linspace(
+    0,
+    3,
+    150
+)
+
+chi2_theta = []
+
+for theta_deg in theta_scan_deg:
+
+    theta_hyp = np.deg2rad(theta_deg)
+
+    nu_dir_hyp = get_direction_vector(
+        theta_hyp,
+        phi_nu
+    )
+
+    delta = compute_global_delta_chi2_theta(
+        measured_event,
+        source_pos,
+        nu_dir_hyp,
+        detector_positions,
+        interp,
+        t_vals,
+        R_vals,
+        Z_vals
+    )
+
+    chi2_theta.append(-delta)
+
+chi2_theta = np.array(
+    chi2_theta
+)
+
+delta_chi2_theta = (
+    chi2_theta -
+    np.nanmin(chi2_theta)
+)
+
+best_theta_deg = theta_scan_deg[
+    np.nanargmin(delta_chi2_theta)
+]
+
+# =====================
+# FINE THETA SCAN
+# =====================
+
+chi2_theta_fine = []
+
+theta_scan_fine = np.linspace(
+    0,
+    0.2,
+    200
+)
+
+for theta_deg in theta_scan_fine:
+
+    theta_hyp = np.deg2rad(
+        theta_deg
+    )
+
+    nu_dir_hyp = get_direction_vector(
+        theta_hyp,
+        phi_nu
+    )
+
+    delta = compute_global_delta_chi2_theta(
+        measured_event,
+        source_pos,
+        nu_dir_hyp,
+        detector_positions,
+        interp,
+        t_vals,
+        R_vals,
+        Z_vals
+    )
+
+    chi2_theta_fine.append(
+        -delta
+    )
+
+chi2_theta_fine = np.array(
+    chi2_theta_fine
+)
+
+delta_chi2_theta_fine = (
+    chi2_theta_fine
+    - np.nanmin(
+        chi2_theta_fine
+    )
+)
+
+best_theta_fine = theta_scan_fine[
+    np.nanargmin(
+        delta_chi2_theta_fine
+    )
+]
+
+_, theta_high_1sigma = find_crossings(
+    theta_scan_fine,
+    delta_chi2_theta_fine,
+    1
+)
+
+theta_low_1sigma = 0
+theta_low_2sigma = 0
+theta_low_3sigma = 0
+
+_, theta_high_2sigma = find_crossings(
+    theta_scan_fine,
+    delta_chi2_theta_fine,
+    4
+)
+
+_, theta_high_3sigma = find_crossings(
+    theta_scan_fine,
+    delta_chi2_theta_fine,
+    9
+)
+
+sigma_theta = theta_high_1sigma
+
+theta_error_deg = (
+    best_theta_fine
+    - np.rad2deg(theta_nu)
+)
+
+# =====================
+# MONTE CARLO X + Y + Z 
 # =====================
 
 n_reco_events = 20
 
 x_reco_values = []
+y_reco_values = []
+z_reco_values = []
+theta_reco_values = []
 
 for evt in range(n_reco_events):
 
@@ -790,90 +1213,36 @@ for evt in range(n_reco_events):
             "waveform": measured
         })
 
-    best_x_evt = reconstruct_x(
-        measured_event
-    )
+    best_x_evt = reconstruct_x(measured_event)
+    best_y_evt = reconstruct_y(measured_event)
+    best_z_evt = reconstruct_z(measured_event)
+    best_theta_evt = reconstruct_theta(measured_event)
 
-    x_reco_values.append(
-        best_x_evt
-    )
+    x_reco_values.append(best_x_evt)
+    y_reco_values.append(best_y_evt)
+    z_reco_values.append(best_z_evt)
+    theta_reco_values.append(np.rad2deg(best_theta_evt))
 
-x_reco_values = np.array(
-    x_reco_values
-)
 
-dx_cm = (
-    x_reco_values - x0
-) * 100
-
+x_reco_values = np.array(x_reco_values)
+dx_cm = (x_reco_values - x0) * 100
+mean_mc_x = np.mean(dx_cm)
 sigma_mc_x = np.std(dx_cm)
 
-mean_mc_x = np.mean(dx_cm)
+y_reco_values = np.array(y_reco_values)
+dy_cm = (y_reco_values - y0) * 100
+mean_mc_y = np.mean(dy_cm)
+sigma_mc_y = np.std(dy_cm)
 
+z_reco_values = np.array(z_reco_values)
+dz_cm = (z_reco_values - z0) * 100
+mean_mc_z = np.mean(dz_cm)
+sigma_mc_z = np.std(dz_cm)
 
-# =====================
-# MONTE CARLO Y
-# =====================
-
-y_reco_values = []
-
-for evt in range(n_reco_events):
-
-    measured_event = []
-
-    for d in chi2_detectors:
-
-        signal_template = d["signal"]
-
-        i_rand = np.random.randint(
-            0,
-            noise_data.shape[0]
-        )
-
-        j_rand = np.random.randint(
-            0,
-            noise_data.shape[1]
-        )
-
-        noise = noise_data[i_rand, j_rand, :]
-
-        noise_std = np.std(noise)
-
-        if not np.isfinite(noise_std) or noise_std < 1e-12:
-            continue
-
-        noise = noise * (0.01 / noise_std)
-
-        measured = signal_template + noise
-
-        measured_event.append({
-            "id": d["id"],
-            "waveform": measured
-        })
-
-    best_y_evt = reconstruct_y(
-        measured_event
-    )
-
-    y_reco_values.append(
-        best_y_evt
-    )
-
-y_reco_values = np.array(
-    y_reco_values
-)
-
-dy_cm = (
-    y_reco_values - y0
-) * 100
-
-sigma_mc_y = np.std(
-    dy_cm
-)
-
-mean_mc_y = np.mean(
-    dy_cm
-)
+theta_reco_values = np.array(theta_reco_values)
+dtheta_deg = theta_reco_values - np.rad2deg(theta_nu)
+mean_mc_theta = np.mean(dtheta_deg)
+sigma_mc_theta = np.std(dtheta_deg)
 
 # =====================
 # NOISE-ONLY DELTA CHI2 DISTRIBUTION
@@ -1036,6 +1405,11 @@ app.layout = html.Div([
         dcc.Graph(id="delta-y-fine-plot"),
 
         dcc.Graph(id="delta-z-plot"),
+        dcc.Graph(id="delta-z-fine-plot"),
+
+        dcc.Graph(id="delta-theta-plot"),
+        dcc.Graph(id="delta-theta-fine-plot"),
+
         dcc.Graph(id="noise-dchi2-distribution"),
         dcc.Graph(id="signal-dchi2-distribution"),
         dcc.Graph(id="combined-dchi2-distribution"),
@@ -1203,6 +1577,11 @@ def update_3d(t_current_ms, clickData):
     Output("delta-y-fine-plot", "figure"),
 
     Output("delta-z-plot", "figure"),
+    Output("delta-z-fine-plot", "figure"),
+
+    Output("delta-theta-plot", "figure"),
+    Output("delta-theta-fine-plot", "figure"),
+
     Output("noise-dchi2-distribution", "figure"),
     Output("signal-dchi2-distribution", "figure"),
     Output("combined-dchi2-distribution", "figure"),
@@ -1295,6 +1674,50 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
             f"{y_high_1sigma:.3f}] m"
         ),
 
+        html.Hr(),
+
+        html.H4("1D Z reconstruction"),
+
+        html.P(f"True z = {z0:.3f} m"),
+
+        html.P(f"Best-fit z = {best_z_fine:.3f} m"),
+
+        html.P(f"Bias = {z_error_cm:.2f} cm"),
+
+        html.P(f"σz = {sigma_z*100:.2f} cm"),
+
+        html.P(f"MC bias = {mean_mc_z:.2f} cm"),
+
+        html.P(f"MC σz = {sigma_mc_z:.2f} cm"),
+
+        html.P(
+            f"1σ interval = "
+            f"[{z_low_1sigma:.3f}, "
+            f"{z_high_1sigma:.3f}] m"
+        ),
+
+        html.Hr(),
+
+        html.H4("1D Theta reconstruction"),
+
+        html.P(f"True θ = {np.rad2deg(theta_nu):.3f} deg"),
+
+        html.P(f"Best-fit θ = {best_theta_fine:.3f} deg"),
+
+        html.P(f"Bias = {theta_error_deg:.3f} deg"),
+
+        html.P(f"σθ = {sigma_theta:.3f} deg"),
+
+        html.P(f"MC bias = {mean_mc_theta:.3f} deg"),
+
+        html.P(f"MC σθ = {sigma_mc_theta:.3f} deg"),
+
+        html.P(
+            f"1σ interval = "
+            f"[{theta_low_1sigma:.3f}, "
+            f"{theta_high_1sigma:.3f}] deg"
+        ),
+
         ]
     
     # if no detector is selected, we return empty plots and just the base info
@@ -1311,6 +1734,9 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # niets geselecteerd
     if selected_idx is None:
         return (
+    go.Figure(), 
+    go.Figure(), 
+    go.Figure(),  
     go.Figure(),        
     go.Figure(),        
     go.Figure(),        
@@ -2016,6 +2442,12 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         )
     )
 
+    fig_delta_z.add_hline(
+    y=1,
+    line_dash="dot",
+    line_color="green"
+)
+
     fig_delta_z.add_vline(
         x=z0,
         line_dash="dash"
@@ -2052,6 +2484,286 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         xaxis_title="z [m]",
         yaxis_title="Δχ²"
     )
+
+    fig_delta_z_fine = go.Figure()
+
+    fig_delta_z_fine.add_vrect(
+        x0=z_low_3sigma,
+        x1=z_high_3sigma,
+        fillcolor="orange",
+        opacity=0.2,
+        layer="below",
+        line_width=0
+    )
+
+    fig_delta_z_fine.add_vrect(
+        x0=z_low_2sigma,
+        x1=z_high_2sigma,
+        fillcolor="gold",
+        opacity=0.20,
+        layer="below",
+        line_width=0
+    )
+
+    fig_delta_z_fine.add_vrect(
+        x0=z_low_1sigma,
+        x1=z_high_1sigma,
+        fillcolor="limegreen",
+        opacity=0.3,
+        layer="below",
+        line_width=0
+    )
+
+    fig_delta_z_fine.add_trace(
+        go.Scatter(
+            x=z_scan_fine,
+            y=delta_chi2_z_fine,
+            mode="lines",
+            name="Δχ² fine"
+        )
+    )
+
+    fig_delta_z_fine.update_yaxes(
+        range=[0,10]
+    )
+
+    fig_delta_z_fine.add_trace(
+        go.Scatter(
+            x=[z_scan_fine[0], z_scan_fine[-1]],
+            y=[1,1],
+            mode="lines",
+            name="Δχ² = 1 (1σ)",
+            line=dict(color="green", dash="dot")
+        )
+    )
+
+    fig_delta_z_fine.add_trace(
+        go.Scatter(
+            x=[z_scan_fine[0], z_scan_fine[-1]],
+            y=[4,4],
+            mode="lines",
+            name="Δχ² = 4 (2σ)",
+            line=dict(color="gold", dash="dot")
+        )
+    )
+
+    fig_delta_z_fine.add_trace(
+        go.Scatter(
+            x=[z_scan_fine[0], z_scan_fine[-1]],
+            y=[9,9],
+            mode="lines",
+            name="Δχ² = 9 (3σ)",
+            line=dict(color="orange", dash="dot")
+        )
+    )
+
+    fig_delta_z_fine.add_trace(
+        go.Scatter(
+            x=[best_z_fine, best_z_fine],
+            y=[0,10],
+            mode="lines",
+            name="Best fit",
+            line=dict(color="black", dash="dash")
+        )
+    )
+
+    fig_delta_z_fine.add_trace(
+        go.Scatter(
+            x=[z0, z0],
+            y=[0,10],
+            mode="lines",
+            name="True position",
+            line=dict(color="magenta", dash="dashdot")
+        )
+    )
+
+    fig_delta_z_fine.update_layout(
+        title=f"Zoom around minimum (σz = {sigma_z*100:.2f} cm)",
+        xaxis_title="z [m]",
+        yaxis_title="Δχ²"
+    )
+
+    fig_delta_z_fine.update_xaxes(
+        range=[
+            best_z_fine - 0.025,
+            best_z_fine + 0.025
+        ]
+    )
+
+    # =====================
+    # THETA SCAN
+    # =====================
+
+    fig_theta = go.Figure()
+
+    fig_theta.add_trace(
+        go.Scatter(
+            x=theta_scan_deg,
+            y=delta_chi2_theta,
+            mode="lines",
+            name="Δχ²(theta)"
+        )
+    )
+
+    fig_theta.add_hline(
+        y=1,
+        line_dash="dot"
+    )
+
+    fig_theta.add_vline(
+        x=0,
+        line_dash="dash"
+    )
+
+    fig_theta.add_trace(
+    go.Scatter(
+        x=[0],
+        y=[0],
+        mode="markers",
+        marker=dict(
+            size=12,
+            color="red"
+        ),
+        name="True θ"
+    )
+)
+
+    fig_theta.add_trace(
+        go.Scatter(
+            x=[best_theta_deg],
+            y=[0],
+            mode="markers",
+            marker=dict(size=12,color="cyan"),
+            name="Best fit"
+        )
+    )
+
+    fig_theta.update_layout(
+        title="Δχ² scan in theta",
+        xaxis_title="Theta [deg]",
+        yaxis_title="Δχ²"
+    )
+
+    # =====================
+    # THETA FINE
+    # =====================
+
+    fig_theta_fine = go.Figure()
+
+    fig_theta_fine.add_vrect(
+        x0=theta_low_3sigma,
+        x1=theta_high_3sigma,
+        fillcolor="orange",
+        opacity=0.2,
+        layer="below",
+        line_width=0
+    )
+
+    fig_theta_fine.add_vrect(
+        x0=theta_low_2sigma,
+        x1=theta_high_2sigma,
+        fillcolor="gold",
+        opacity=0.2,
+        layer="below",
+        line_width=0
+    )
+
+    fig_theta_fine.add_vrect(
+        x0=theta_low_1sigma,
+        x1=theta_high_1sigma,
+        fillcolor="limegreen",
+        opacity=0.3,
+        layer="below",
+        line_width=0
+    )
+
+    fig_theta_fine.add_trace(
+        go.Scatter(
+            x=theta_scan_fine,
+            y=delta_chi2_theta_fine,
+            mode="lines",
+            name="Δχ² fine"
+        )
+    )
+
+    fig_theta_fine.add_trace(
+    go.Scatter(
+        x=[theta_scan_fine[0], theta_scan_fine[-1]],
+        y=[1, 1],
+        mode="lines",
+        name="Δχ² = 1 (1σ)",
+        line=dict(
+            color="green",
+            dash="dot"
+        )
+    )
+)
+
+    fig_theta_fine.add_trace(
+        go.Scatter(
+            x=[theta_scan_fine[0], theta_scan_fine[-1]],
+            y=[4, 4],
+            mode="lines",
+            name="Δχ² = 4 (2σ)",
+            line=dict(
+                color="gold",
+                dash="dot"
+            )
+        )
+    )
+
+    fig_theta_fine.add_trace(
+        go.Scatter(
+            x=[theta_scan_fine[0], theta_scan_fine[-1]],
+            y=[9, 9],
+            mode="lines",
+            name="Δχ² = 9 (3σ)",
+            line=dict(
+                color="orange",
+                dash="dot"
+            )
+        )
+    )
+
+    fig_theta_fine.add_trace(
+        go.Scatter(
+            x=[best_theta_fine, best_theta_fine],
+            y=[0, 10],
+            mode="lines",
+            name="Best fit",
+            line=dict(
+                color="black",
+                dash="dash"
+            )
+        )
+    )
+
+    fig_theta_fine.add_trace(
+        go.Scatter(
+            x=[np.rad2deg(theta_nu), np.rad2deg(theta_nu)],
+            y=[0, 10],
+            mode="lines",
+            name="True θ",
+            line=dict(
+                color="magenta",
+                dash="dashdot"
+            )
+        )
+    )
+
+    fig_theta_fine.update_yaxes(
+    range=[0,10]
+)
+    fig_theta_fine.update_xaxes(
+    range=[0, 0.2]
+)
+
+    fig_theta_fine.update_layout(
+        title=f"Theta resolution (σθ = {sigma_theta:.3f} deg)",
+        xaxis_title="Theta [deg]",
+        yaxis_title="Δχ²"
+    )
+
 
 
     # =====================
@@ -2227,6 +2939,10 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     fig_delta_y_fine,
 
     fig_delta_z,
+    fig_delta_z_fine,
+
+    fig_theta,
+    fig_theta_fine,
 
     fig_noise_dchi2,
     fig_signal_dchi2,
