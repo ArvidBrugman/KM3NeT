@@ -9,12 +9,14 @@ from scipy import signal
 from scipy.interpolate import RegularGridInterpolator
 from scipy.stats import norm 
 
+np.random.seed(12345)
+
 # =====================
 # PARAMETERS
 # =====================
 # detector geometry
 distance_between_points = 1000
-max_radius = 3300
+max_radius = 3000
 max_height = 3000
 z_step = 1000
 
@@ -53,7 +55,9 @@ nu_dir = get_direction_vector(
 # =====================
 def build_detector_positions():
     # makes rings of detectors at different radii
-    radii = np.arange(0, max_radius, distance_between_points)
+    radii = np.arange(0,max_radius + distance_between_points,
+    distance_between_points
+)
     # makes layers of detectors at different heights
     z_layers = np.arange(0, max_height + 1, z_step)
 
@@ -525,8 +529,8 @@ def reconstruct_z(measured_event):
     chi2_z = []
 
     z_scan = np.linspace(
-        z0 - 0.05,
-        z0 + 0.05,
+        z0 - 1.5,
+        z0 + 1.5,
         200
     )
 
@@ -930,7 +934,7 @@ sigma_y = (
 ) / 2
 
 
-z_scan_1d = np.linspace(z0 - 2, z0 + 2, 80)
+z_scan_1d = np.linspace(z0 - 3, z0 + 3, 80)
 
 for z_hyp in z_scan_1d:
 
@@ -967,8 +971,8 @@ z_error_cm = abs(best_z_1d - z0) * 100
 chi2_z_fine = []
 
 z_scan_fine = np.linspace(
-    best_z_1d - 0.05,
-    best_z_1d + 0.05,
+    best_z_1d - 1.5,
+    best_z_1d + 1.5,
     200
 )
 
@@ -1343,6 +1347,60 @@ signal_delta_chi2_distribution = np.array(
     signal_delta_chi2_distribution
 )
 
+mu_noise, sigma_noise = norm.fit(
+    noise_delta_chi2_distribution
+)
+
+mu_signal, sigma_signal = norm.fit(
+    signal_delta_chi2_distribution
+)
+
+# ============================================================
+# LOOK-ELSEWHERE PARAMETERS
+# ============================================================
+
+# detector resolutions (cm)
+
+sigma_x_cm = sigma_x * 100
+sigma_y_cm = sigma_y * 100
+sigma_z_cm = sigma_z * 100
+
+detector_x_cm = 2 * max_radius * 100
+detector_y_cm = 2 * max_radius * 100
+detector_z_cm = max_height * 100
+
+N_trials = (
+    (detector_x_cm / sigma_x_cm)
+    *
+    (detector_y_cm / sigma_y_cm)
+    *
+    (detector_z_cm / sigma_z_cm)
+)
+
+# midpoint tussen beide gaussians
+
+optimal_cut = (
+    mu_noise +
+    mu_signal
+) / 2
+
+# kans dat noise boven de cut uitkomt
+
+local_false_positive = norm.sf(
+    optimal_cut,
+    loc=mu_noise,
+    scale=sigma_noise
+)
+
+global_false_positive_detector = (
+1 -
+np.exp(
+    -N_trials * local_false_positive
+)
+)
+
+
+
 # =====================
 # SLIDER
 # =====================
@@ -1413,6 +1471,7 @@ app.layout = html.Div([
         dcc.Graph(id="noise-dchi2-distribution"),
         dcc.Graph(id="signal-dchi2-distribution"),
         dcc.Graph(id="combined-dchi2-distribution"),
+        dcc.Graph(id="volume-dchi2-distribution"),
         dcc.Graph(id="waveform"),
         dcc.Graph(id="combined-waveform"),
         dcc.Graph(id="noise-hist"),
@@ -1585,6 +1644,7 @@ def update_3d(t_current_ms, clickData):
     Output("noise-dchi2-distribution", "figure"),
     Output("signal-dchi2-distribution", "figure"),
     Output("combined-dchi2-distribution", "figure"),
+    Output("volume-dchi2-distribution", "figure"),
     Output("waveform", "figure"),
      Output("combined-waveform", "figure"),
      Output("noise-hist", "figure"),
@@ -1718,6 +1778,22 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
             f"{theta_high_1sigma:.3f}] deg"
         ),
 
+        html.Hr(),
+
+        html.H4(
+            "Look-Elsewhere Analysis"
+        ),
+
+        html.P(
+            f"N_trials = "
+            f"{N_trials:.2e}"
+        ),
+
+        html.P(
+    f"Global false positive probability = "
+    f"{100*global_false_positive_detector:.6f}%"
+)
+
         ]
     
     # if no detector is selected, we return empty plots and just the base info
@@ -1734,6 +1810,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     # niets geselecteerd
     if selected_idx is None:
         return (
+    go.Figure(),         
     go.Figure(), 
     go.Figure(), 
     go.Figure(),  
@@ -2584,11 +2661,11 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     )
 
     fig_delta_z_fine.update_xaxes(
-        range=[
-            best_z_fine - 0.025,
-            best_z_fine + 0.025
-        ]
-    )
+    range=[
+        best_z_fine - 1.5,
+        best_z_fine + 1.5
+    ]
+)
 
     # =====================
     # THETA SCAN
@@ -2791,10 +2868,6 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         name='Noise-only'
     ))
 
-    # Gaussian fit
-    mu_noise, sigma_noise = norm.fit(
-        noise_delta_chi2_distribution
-    )
 
     xfit_noise = np.linspace(
         noise_delta_chi2_distribution.min(),
@@ -2847,10 +2920,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         name='Signal+noise'
     ))
 
-    # Gaussian fit
-    mu_signal, sigma_signal = norm.fit(
-        signal_delta_chi2_distribution
-    )
+
 
     xfit_signal = np.linspace(
         signal_delta_chi2_distribution.min(),
@@ -2930,6 +3000,139 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
         yaxis_title="Probability density"
     )
 
+    # ============================================================
+    # LOOK-ELSEWHERE ROBUSTNESS
+    # ============================================================
+
+    xmin = N_trials / 1000
+    xmax = N_trials * 1000
+
+    fig_volume_scan = go.Figure()
+
+    # ------------------------------------------------------------
+    # Scan detector volume factor
+    # ------------------------------------------------------------
+
+    volume_factors = np.logspace(
+    np.log10(xmin),
+    np.log10(xmax),
+    500
+)
+
+    expected_false_positives = (
+        volume_factors *
+        local_false_positive
+    )
+
+    global_false_positive_probability = (
+    100 *
+    (
+        1 -
+        np.exp(-expected_false_positives)
+    )
+)
+
+    # ------------------------------------------------------------
+    # Main curve
+    # ------------------------------------------------------------
+
+    fig_volume_scan.add_trace(
+        go.Scatter(
+            x=volume_factors,
+            y=global_false_positive_probability,
+            mode="lines",
+            line=dict(width=4),
+            name="Global false positive probability"
+        )
+    )
+
+    # ------------------------------------------------------------
+    # Actual detector volume
+    # ------------------------------------------------------------
+
+    ymax_fp = np.max(global_false_positive_probability)
+
+    fig_volume_scan.add_trace(
+        go.Scatter(
+            x=[N_trials, N_trials],
+            y=[0, ymax_fp],
+            mode="lines",
+            line=dict(
+                color="black",
+                width=3,
+                dash="dash"
+            ),
+            name="Detector volume"
+        )
+    )
+
+    detector_fp = (
+    100 *
+    (
+        1 -
+        np.exp(
+            -N_trials * local_false_positive
+        )
+    )
+)
+
+    fig_volume_scan.add_trace(
+        go.Scatter(
+            x=[N_trials],
+            y=[detector_fp],
+            mode="markers",
+            marker=dict(
+                size=12,
+                color="red"
+            ),
+            name="Detector"
+        )
+    )
+    
+    fig_volume_scan.add_annotation(
+    x=N_trials,
+    y=0.004,
+    text=f"N = {N_trials:.2e}",
+    showarrow=False
+)
+    
+
+    # ------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------
+
+    fig_volume_scan.update_layout(
+    title=(
+    "Look-Elsewhere Effect "
+    f"(Global FP = {100*global_false_positive_detector:.6f}%)"
+),
+    xaxis_title=(
+        "Volume factor / number of trials"
+    ),
+    yaxis_title="False positive probability [%]",
+    template="plotly_white"
+)
+    fig_volume_scan.update_layout(
+    showlegend=True,
+    legend=dict(
+        x=0.02,
+        y=0.98
+    )
+)
+
+    fig_volume_scan.update_xaxes(
+    type="log",
+    range=[
+        np.log10(xmin),
+        np.log10(xmax)
+    ]
+)
+
+    fig_volume_scan.update_yaxes(
+    range=[0, 0.5]
+)
+
+
 
     return (
     fig_delta_x,
@@ -2947,6 +3150,7 @@ def update_info(clickData_3d, clickData_dchi2, t_current_ms):
     fig_noise_dchi2,
     fig_signal_dchi2,
     fig_combined_dchi2,
+    fig_volume_scan,
     fig1,
     fig_combined,
     fig2,
